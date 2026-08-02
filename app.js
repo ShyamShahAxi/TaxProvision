@@ -32,8 +32,9 @@ const defaultSettings = {
 /* ---------- Provision (one Year of Assessment) ---------- */
 const emptyProvision = () => ({
   profitBeforeTax: 0,
-  addBacks: [],             // {id,label,amount,type:'permanent'|'temporary',source}
-  deductions: [],           // {id,label,amount,type,source}
+  tb: [],                   // trial balance: {id,code,name,debit,credit}
+  addBacks: [],             // {id,label,amount,type:'permanent'|'temporary',source,account}
+  deductions: [],           // {id,label,amount,type,source,account}
   lossesBroughtForward: 0,
   foreignTaxCredits: 0,
   deferredItems: [],        // {id,label,openingTD,closingTD,source}
@@ -94,6 +95,18 @@ function download(name, text, mime) {
    ============================================================= */
 function sum(list, key) { return list.reduce((t, x) => t + num(x[key]), 0); }
 
+/* ---------- Trial balance linkage ---------- */
+function tbMap() {
+  const m = {};
+  provision.tb.forEach(a => { if (a.code) m[String(a.code)] = a; });
+  return m;
+}
+function tbNet(code, map) { const a = (map || tbMap())[String(code)]; return a ? num(a.debit) - num(a.credit) : 0; }
+/* Effective amount of an add-back/deduction: pulled from the TB when linked,
+   otherwise the manually entered amount. Sign is set by the section it sits in
+   (add-back vs deduction), so we take the magnitude of the account balance. */
+function lineAmt(x, map) { return x.account ? Math.abs(tbNet(x.account, map)) : num(x.amount); }
+
 /* Singapore tax exemption on chargeable income. */
 function exemptionAmount(ci) {
   if (ci <= 0) return 0;
@@ -115,10 +128,12 @@ function recompute() {
   const dedPerm = p.deductions.filter(x => x.type !== 'temporary');
   const dedTemp = p.deductions.filter(x => x.type === 'temporary');
 
-  const addPermTotal = sum(addPerm, 'amount');
-  const addTempTotal = sum(addTemp, 'amount');
-  const dedPermTotal = sum(dedPerm, 'amount');
-  const dedTempTotal = sum(dedTemp, 'amount');
+  const map = tbMap();
+  const tot = list => list.reduce((t, x) => t + lineAmt(x, map), 0);
+  const addPermTotal = tot(addPerm);
+  const addTempTotal = tot(addTemp);
+  const dedPermTotal = tot(dedPerm);
+  const dedTempTotal = tot(dedTemp);
   const addTotal = addPermTotal + addTempTotal;
   const dedTotal = dedPermTotal + dedTempTotal;
 
@@ -181,6 +196,7 @@ function renderAll() {
 function render() {
   const P = recompute();
   if (activeTab === 'dashboard') renderDashboard(P);
+  else if (activeTab === 'tb') renderTB();
   else if (activeTab === 'current') renderCurrent(P);
   else if (activeTab === 'deferred') renderDeferred(P);
   else if (activeTab === 'recon') renderRecon(P);
@@ -227,18 +243,57 @@ function renderDashboard(P) {
     : `<p class="legend">No Fixed Asset Register imported. Go to <strong>Data &amp; Settings → FAR link</strong> to import a FAR backup and pull in depreciation, capital allowances and the deferred-tax temporary difference automatically.</p>`;
 }
 
+/* ----- Trial balance ----- */
+function renderTB() {
+  const body = $('#tb-body');
+  if (!provision.tb.length) {
+    body.innerHTML = `<tr class="empty-row"><td colspan="5">No accounts. Add one, import a CSV (Code, Name, Debit, Credit), or pull from FAR in Data &amp; Settings.</td></tr>`;
+  } else {
+    body.innerHTML = provision.tb.map((a, i) => `<tr data-line="tb" data-idx="${i}">
+      <td><input class="desc-in" style="min-width:90px" data-key="code" value="${attr(a.code)}" placeholder="Code"></td>
+      <td><input class="desc-in" data-key="name" value="${attr(a.name)}" placeholder="Account name"></td>
+      <td class="num"><input class="amt" type="number" step="0.01" data-key="debit" value="${a.debit}"></td>
+      <td class="num"><input class="amt" type="number" step="0.01" data-key="credit" value="${a.credit}"></td>
+      <td class="act"><button class="ghost sm" data-act="del-line" title="Remove">&times;</button></td>
+    </tr>`).join('');
+  }
+  const dr = sum(provision.tb, 'debit'), cr = sum(provision.tb, 'credit');
+  $('#tb-foot').innerHTML = `<tr><td colspan="2">Total (${provision.tb.length} accounts)</td><td class="num">${fmt(dr)}</td><td class="num">${fmt(cr)}</td><td></td></tr>`;
+  const diff = dr - cr;
+  $('#tb-note').innerHTML = Math.abs(diff) < 0.005
+    ? 'Trial balance is in balance (debits = credits).'
+    : `Debits − credits = ${acc(diff)}. A partial trial balance (only the accounts you link) need not balance; a complete one should.`;
+}
+
+function tbOptions(selected) {
+  const opts = ['<option value="">— manual —</option>'];
+  provision.tb.forEach(a => opts.push(`<option value="${attr(a.code)}"${String(a.code) === String(selected) ? ' selected' : ''}>${esc(a.code)} · ${esc(a.name)}</option>`));
+  return opts.join('');
+}
+
 /* ----- Current tax computation ----- */
 function lineRows(list, listName) {
   if (!list.length) return `<tr><td class="indent" colspan="4"><span class="hint-text">No items.</span></td></tr>`;
-  return list.map((x, i) => `<tr data-line="${listName}" data-idx="${i}">
-    <td class="indent"><input class="desc-in" data-key="label" value="${attr(x.label)}" placeholder="Description">${x.source === 'far' ? '<span class="src-tag">FAR</span>' : ''}</td>
-    <td class="num"><input class="amt" type="number" step="0.01" data-key="amount" value="${x.amount}"></td>
-    <td class="num"><select data-key="type" class="type-sel">
-      <option value="permanent"${x.type !== 'temporary' ? ' selected' : ''}>Permanent</option>
-      <option value="temporary"${x.type === 'temporary' ? ' selected' : ''}>Temporary</option>
-    </select></td>
-    <td class="act"><button class="ghost sm" data-act="del-line" title="Remove">&times;</button></td>
-  </tr>`).join('');
+  const map = tbMap();
+  return list.map((x, i) => {
+    const linked = !!x.account;
+    const missing = linked && !map[String(x.account)];
+    const amtCell = linked
+      ? `<span class="note-num">${fmt(Math.abs(tbNet(x.account, map)))}</span> <span class="src-tag">TB</span>`
+      : `<input class="amt" type="number" step="0.01" data-key="amount" value="${x.amount}">`;
+    return `<tr data-line="${listName}" data-idx="${i}">
+      <td class="indent">
+        <input class="desc-in" data-key="label" value="${attr(x.label)}" placeholder="Description">${x.source === 'far' ? '<span class="src-tag">FAR</span>' : ''}
+        <div style="margin-top:4px;display:flex;align-items:center;gap:6px"><span class="hint-text">Link:</span><select data-key="account" class="type-sel" style="font-size:0.74rem">${tbOptions(x.account)}</select>${missing ? '<span class="src-tag" style="background:var(--red-bg);color:var(--red)">code not in TB</span>' : ''}</div>
+      </td>
+      <td class="num">${amtCell}</td>
+      <td class="num"><select data-key="type" class="type-sel">
+        <option value="permanent"${x.type !== 'temporary' ? ' selected' : ''}>Permanent</option>
+        <option value="temporary"${x.type === 'temporary' ? ' selected' : ''}>Temporary</option>
+      </select></td>
+      <td class="act"><button class="ghost sm" data-act="del-line" title="Remove">&times;</button></td>
+    </tr>`;
+  }).join('');
 }
 
 function renderCurrent(P) {
@@ -537,6 +592,62 @@ function applyFarImport(data) {
 }
 function round2(v) { return Math.round(num(v) * 100) / 100; }
 
+/* Pull FAR data straight from this browser's localStorage. On the live site
+   FAR (/FAR/) and this app (/TaxProvision/) share the github.io origin, so
+   FAR's saved register is readable here without exporting a file. */
+function importFarFromBrowser() {
+  const raw = localStorage.getItem('far.assets.v1');
+  if (!raw) { toast('No FAR data in this browser — open the FAR app and load a register first'); return; }
+  let assets, s = {};
+  try {
+    assets = JSON.parse(raw);
+    const sraw = localStorage.getItem('far.settings.v1');
+    if (sraw) s = JSON.parse(sraw);
+  } catch (e) { toast('Could not read FAR data'); return; }
+  try { applyFarImport({ assets, settings: s }); } catch (err) { toast('Import failed: ' + err.message); }
+}
+
+/* ---------- Trial balance CSV ---------- */
+function parseCsv(text) {
+  const rows = [];
+  text.replace(/\r\n/g, '\n').split('\n').forEach(line => {
+    if (line.trim() === '') return;
+    const cells = []; let cur = '', q = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (q) { if (c === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += c; }
+      else if (c === '"') q = true;
+      else if (c === ',') { cells.push(cur); cur = ''; }
+      else cur += c;
+    }
+    cells.push(cur);
+    rows.push(cells);
+  });
+  return rows;
+}
+function importTbCsv(rows) {
+  if (!rows.length) { toast('Empty CSV'); return; }
+  // Skip a header row if the debit/credit columns aren't numeric.
+  let start = 0;
+  const isNum = v => v != null && v !== '' && isFinite(parseFloat(String(v).replace(/[, ]/g, '')))
+    && /^-?[\d., ]+$/.test(String(v).trim());
+  if (!isNum(rows[0][2]) && !isNum(rows[0][3])) start = 1;
+  const clean = v => num(String(v == null ? '' : v).replace(/[, ]/g, ''));
+  const tb = [];
+  for (let i = start; i < rows.length; i++) {
+    const r = rows[i];
+    if (!r.length || (!r[0] && !r[1])) continue;
+    tb.push({ id: uid(), code: (r[0] || '').trim(), name: (r[1] || '').trim(), debit: clean(r[2]), credit: clean(r[3]) });
+  }
+  provision.tb = tb;
+  saveProvision(); renderAll(); toast(tb.length + ' accounts imported');
+}
+function exportTbCsv() {
+  const rows = [['Code', 'Name', 'Debit', 'Credit']];
+  provision.tb.forEach(a => rows.push([a.code, a.name, round2(a.debit), round2(a.credit)]));
+  download(`trial-balance-ya${settings.ya}.csv`, toCsv(rows), 'text/csv');
+}
+
 /* =============================================================
    CSV / EXPORT
    ============================================================= */
@@ -547,9 +658,9 @@ function exportCurrentCsv() {
   const P = recompute();
   const rows = [['Tax computation', 'YA ' + settings.ya], ['Item', 'Amount'],
     ['Net profit/(loss) before tax', P.pbt]];
-  provision.addBacks.forEach(x => rows.push(['Add-back: ' + x.label + ' (' + x.type + ')', num(x.amount)]));
+  provision.addBacks.forEach(x => rows.push(['Add-back: ' + x.label + ' (' + x.type + ')' + (x.account ? ' [TB ' + x.account + ']' : ''), round2(lineAmt(x))]));
   rows.push(['Total add-backs', P.addTotal]);
-  provision.deductions.forEach(x => rows.push(['Deduction: ' + x.label + ' (' + x.type + ')', -num(x.amount)]));
+  provision.deductions.forEach(x => rows.push(['Deduction: ' + x.label + ' (' + x.type + ')' + (x.account ? ' [TB ' + x.account + ']' : ''), -round2(lineAmt(x))]));
   rows.push(['Total deductions', -P.dedTotal], ['Adjusted profit/(loss)', P.adjusted],
     ['Losses utilised', -P.lossOffset], ['Chargeable income before exemption', P.ciBeforeExempt],
     ['Tax exemption', -P.exemption], ['Chargeable income', P.chargeableIncome],
@@ -601,10 +712,13 @@ function onFieldInput(e) {
     const item = list[+row.dataset.idx];
     if (!item) return;
     const key = t.dataset.key;
-    item[key] = (key === 'label' || key === 'type') ? t.value : (t.value === '' ? 0 : num(t.value));
+    const stringKey = key === 'label' || key === 'type' || key === 'code' || key === 'name' || key === 'account';
+    item[key] = stringKey ? t.value : (t.value === '' ? 0 : num(t.value));
     saveProvision();
-    if (activeTab === 'current' && key !== 'type') updateCurrentComputed();
-    else if (committed) render();
+    // 'type' and 'account' change layout/derived amounts — need a full re-render.
+    const heavy = key === 'type' || key === 'account';
+    if (activeTab === 'current' && !heavy) updateCurrentComputed();
+    else if (committed || heavy) render();
   }
 }
 
@@ -634,6 +748,23 @@ function wire() {
     provision.deferredItems.push({ id: uid(), label: '', openingTD: 0, closingTD: 0, source: 'manual' });
     saveProvision(); render();
   });
+
+  // Trial balance
+  $('#btn-add-tb').addEventListener('click', () => {
+    provision.tb.push({ id: uid(), code: '', name: '', debit: 0, credit: 0 });
+    saveProvision(); render();
+  });
+  $('#btn-import-tb').addEventListener('click', () => $('#tb-file').click());
+  $('#tb-file').addEventListener('change', e => {
+    const file = e.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => { importTbCsv(parseCsv(reader.result)); e.target.value = ''; };
+    reader.readAsText(file);
+  });
+  $('#exp-tb').addEventListener('click', exportTbCsv);
+
+  // Pull FAR data from the same browser (shared origin on the live site)
+  $('#btn-far-browser').addEventListener('click', importFarFromBrowser);
 
   $('#btn-save-settings').addEventListener('click', () => {
     settings.companyName = $('#s-companyName').value.trim() || 'Company';
@@ -699,7 +830,7 @@ function readJson(e, cb) {
    On the very first visit (nothing saved yet) seed the AUS155 sample so the
    app opens with data instead of a blank statement. The init marker means an
    explicit "Clear all data" stays cleared and we never overwrite real work. */
-const INIT_KEY = 'taxprov.init.v1';
+const INIT_KEY = 'taxprov.init.v2';
 if (!localStorage.getItem(INIT_KEY)) {
   loadSample();
   saveSettings();

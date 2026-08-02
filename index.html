@@ -21,6 +21,7 @@
 
   <nav class="tabs" role="tablist">
     <button class="tab active" data-tab="dashboard">Dashboard</button>
+    <button class="tab" data-tab="tb">Trial Balance</button>
     <button class="tab" data-tab="current">Current Tax</button>
     <button class="tab" data-tab="deferred">Deferred Tax</button>
     <button class="tab" data-tab="recon">Tax Reconciliation</button>
@@ -48,6 +49,27 @@
           <div id="dash-far"></div>
         </div>
       </div>
+    </section>
+
+    <!-- Trial balance -->
+    <section class="view" id="view-tb">
+      <div class="view-head">
+        <div><h2>Trial balance</h2><div class="desc">GL accounts and balances. Link add-backs and deductions to these accounts (in Current Tax) so amounts pull through automatically.</div></div>
+        <div class="toolbar">
+          <button class="primary sm" id="btn-add-tb">+ Add account</button>
+          <button id="btn-import-tb">Import CSV</button>
+          <input type="file" id="tb-file" accept=".csv,text/csv" style="display:none">
+          <button id="exp-tb">Export CSV</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Account</th><th>Name</th><th class="num">Debit</th><th class="num">Credit</th><th></th></tr></thead>
+          <tbody id="tb-body"></tbody>
+          <tfoot id="tb-foot"></tfoot>
+        </table>
+      </div>
+      <p class="legend" id="tb-note"></p>
     </section>
 
     <!-- Current tax -->
@@ -173,9 +195,10 @@
         </div>
         <div class="card">
           <h3>FAR link</h3>
-          <p class="legend" style="margin-top:0">Import a Fixed Asset Register backup (JSON). Its accounting depreciation, capital allowances and the accelerated-allowance temporary difference flow straight into the computation and deferred tax.</p>
+          <p class="legend" style="margin-top:0">Pull straight from the <a href="../FAR/" target="_blank" rel="noopener">Fixed Asset Register</a> — on the live site both apps share this browser's storage, so no file is needed. Or import a FAR JSON backup. Either way, accounting depreciation, capital allowances and the accelerated-allowance temporary difference flow into the computation and deferred tax.</p>
           <div class="toolbar" style="margin-bottom:12px">
-            <button class="primary" id="btn-import-far">Import FAR backup (JSON)</button>
+            <button class="primary" id="btn-far-browser">Pull from FAR (this browser)</button>
+            <button id="btn-import-far">Import FAR backup (JSON)</button>
             <input type="file" id="far-file" accept="application/json,.json" style="display:none">
           </div>
           <div id="far-status"></div>
@@ -199,7 +222,7 @@
 
   <div class="toast" id="toast"></div>
   <script src="far-import.js?v=1"></script>
-  <script src="sample-data.js?v=1"></script>
-  <script src="app.js?v=2"></script>
+  <script src="sample-data.js?v=2"></script>
+  <script src="app.js?v=3"></script>
 </body>
 </html>
