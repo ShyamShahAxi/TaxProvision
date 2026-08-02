@@ -13,6 +13,7 @@ Like FAR, it is a single static web app — no server, no build step, no depende
 | Tab | Details |
 |-----|---------|
 | **Dashboard** | KPIs — profit before tax, chargeable income, current tax, deferred tax charge/credit, total tax expense and effective tax rate — plus the tax charge to P&L and the FAR link status |
+| **Trial Balance** | GL accounts and balances (add/import CSV/export). Add-backs and deductions **link to a TB account**, so the amount pulls from the balance automatically — edit the TB and the computation updates |
 | **Current Tax** | Editable computation: net profit before tax → add-backs → deductions & capital allowances → adjusted profit → losses & exemption → chargeable income → tax → **current tax payable**. Every add-back/deduction is tagged **permanent** or **temporary** |
 | **Deferred Tax** | Temporary differences (carrying amount − tax base) × rate. Positive difference = liability, negative = asset. Opening and closing balances give the movement charged/credited to P&L |
 | **Tax Reconciliation** | Reconciles tax at the statutory rate to total income-tax expense; temporary differences net to nil and drop out, permanent items, exemption, rebate, FTC and prior-year adjustments remain |
@@ -34,7 +35,12 @@ Like FAR, it is a single static web app — no server, no build step, no depende
 
 ## FAR link
 
-**Data & Settings → FAR link → Import FAR backup (JSON)** reads a Fixed Asset Register export and, using a faithful port of FAR's depreciation/capital-allowance engine (`far-import.js`), re-derives as at the register's reporting date:
+Two ways to pull the register in, both under **Data & Settings → FAR link**:
+
+- **Pull from FAR (this browser)** — on the deployed site the FAR app (`/FAR/`) and this app (`/TaxProvision/`) share the same `github.io` origin, so they share `localStorage`. This button reads FAR's saved register directly — no file needed.
+- **Import FAR backup (JSON)** — load a FAR JSON export (works locally too, where the two apps don't share storage).
+
+Either way, using a faithful port of FAR's depreciation/capital-allowance engine (`far-import.js`), it re-derives as at the register's reporting date:
 
 - **accounting depreciation** for the year → a temporary **add-back**;
 - **capital allowances** for the year → a temporary **deduction**;
