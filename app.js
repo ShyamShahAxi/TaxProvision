@@ -682,6 +682,7 @@ function wire() {
   $('#btn-clear').addEventListener('click', () => {
     if (!confirm('Clear all provision data from this browser?')) return;
     localStorage.removeItem(STORE_KEY); localStorage.removeItem(SETTINGS_KEY);
+    localStorage.setItem(INIT_KEY, '1'); // stay cleared; don't re-seed the sample on reload
     settings = Object.assign({}, defaultSettings); provision = emptyProvision();
     renderAll(); toast('Cleared');
   });
@@ -694,6 +695,16 @@ function readJson(e, cb) {
   reader.readAsText(file);
 }
 
-/* ---------- Boot ---------- */
+/* ---------- Boot ----------
+   On the very first visit (nothing saved yet) seed the AUS155 sample so the
+   app opens with data instead of a blank statement. The init marker means an
+   explicit "Clear all data" stays cleared and we never overwrite real work. */
+const INIT_KEY = 'taxprov.init.v1';
+if (!localStorage.getItem(INIT_KEY)) {
+  loadSample();
+  saveSettings();
+  saveProvision();
+  localStorage.setItem(INIT_KEY, '1');
+}
 wire();
 renderAll();
