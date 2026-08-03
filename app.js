@@ -362,13 +362,26 @@ function renderAudit() {
   if (!provision.auditAdjustments.length) {
     body.innerHTML = `<tr class="empty-row"><td colspan="5">No audit adjustments. Add one to post a debit/credit against a trial-balance account.</td></tr>`;
   } else {
-    body.innerHTML = provision.auditAdjustments.map((e, i) => `<tr data-line="auditAdjustments" data-idx="${i}">
-      <td><select class="type-sel" data-key="account" style="min-width:220px">${tbOptions(e.account)}</select></td>
-      <td><input class="desc-in" data-key="description" value="${attr(e.description)}" placeholder="Reason for adjustment">${e.source === 'stat' ? '<span class="src-tag">STAT</span>' : ''}</td>
-      <td class="num"><input class="amt" type="number" step="0.01" data-key="debit" value="${e.debit}"></td>
-      <td class="num"><input class="amt" type="number" step="0.01" data-key="credit" value="${e.credit}"></td>
-      <td class="act"><button class="ghost sm" data-act="del-line" title="Remove">&times;</button></td>
-    </tr>`).join('');
+    body.innerHTML = provision.auditAdjustments.map((e, i) => {
+      // Imported stat adjustments are read-only (managed by re-import); only
+      // manually-added rows are editable.
+      if (e.source === 'stat') {
+        return `<tr data-line="auditAdjustments" data-idx="${i}">
+          <td class="tb-code">${esc(e.account)} <span class="hint-text">${esc(nameFor(e.account))}</span></td>
+          <td>${esc(e.description)} <span class="src-tag">STAT</span></td>
+          <td class="num" title="${exact(e.debit)}">${e.debit ? money(e.debit) : '<span class="zero">–</span>'}</td>
+          <td class="num" title="${exact(e.credit)}">${e.credit ? money(e.credit) : '<span class="zero">–</span>'}</td>
+          <td class="act"></td>
+        </tr>`;
+      }
+      return `<tr data-line="auditAdjustments" data-idx="${i}">
+        <td><select class="type-sel" data-key="account" style="min-width:220px">${tbOptions(e.account)}</select></td>
+        <td><input class="desc-in" data-key="description" value="${attr(e.description)}" placeholder="Reason for adjustment"></td>
+        <td class="num"><input class="amt" type="number" step="0.01" data-key="debit" value="${e.debit}"></td>
+        <td class="num"><input class="amt" type="number" step="0.01" data-key="credit" value="${e.credit}"></td>
+        <td class="act"><button class="ghost sm" data-act="del-line" title="Remove">&times;</button></td>
+      </tr>`;
+    }).join('');
   }
   const dr = sum(provision.auditAdjustments, 'debit'), cr = sum(provision.auditAdjustments, 'credit');
   $('#audit-foot').innerHTML = `<tr><td colspan="2">Total</td><td class="num">${fmt(dr)}</td><td class="num">${fmt(cr)}</td><td></td></tr>`;
@@ -941,6 +954,13 @@ function wire() {
     saveProvision(); render();
   });
   $('#btn-import-stat').addEventListener('click', () => $('#stat-file').click());
+  $('#btn-clear-stat').addEventListener('click', () => {
+    const n = provision.auditAdjustments.filter(e => e.source === 'stat').length;
+    if (!n) { toast('No imported stat adjustments'); return; }
+    if (!confirm(`Remove ${n} imported stat adjustments?`)) return;
+    provision.auditAdjustments = provision.auditAdjustments.filter(e => e.source !== 'stat');
+    saveProvision(); renderAll(); toast('Imported stat adjustments cleared');
+  });
   $('#stat-file').addEventListener('change', e => {
     const file = e.target.files[0]; if (!file) return;
     const reader = new FileReader();
