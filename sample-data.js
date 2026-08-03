@@ -22,6 +22,8 @@ function sampleProvision() {
   // from the TB automatically (the manual amount is kept only as a fallback).
   const L = (label, amount, type, source, account) => ({ id: uid(), label, amount, type: type || 'permanent', source: source || 'manual', account: account || '' });
   const D = (label, openingTD, closingTD, source) => ({ id: uid(), label, openingTD, closingTD, source: source || 'manual' });
+  // Deferred temporary difference linked to TB accounts (opening + closing).
+  const DT = (label, accounts) => ({ id: uid(), label, tdAccounts: accounts, source: 'tb' });
   const P = (policy, type, amount) => ({ id: uid(), policy, type, amount });
   return {
     profitBeforeTax: 317389,
@@ -71,10 +73,15 @@ function sampleProvision() {
     // Provisions are deductible when paid, so their balances are DTAs (negative).
     // Accelerated capital allowances / intangibles are DTLs — import the
     // matching FAR backup (Data & Settings → FAR link) to bring those in.
+    // Deferred tax temporary differences — all derived from TB balances.
+    // Provisions (credit balances) are DTAs (negative); accelerated capital
+    // allowances leave the asset's net carrying amount as a DTL (positive).
     deferredItems: [
-      D('Leave provision', -147087, -135008),
-      D('Accrued commissions', -13134, -76832),
-      { id: uid(), label: 'FRS 116 leases (ROU vs lease liability)', openingTD: -24127, closingTD: -9633, source: 'ifrs16' },
+      DT('Leave provision', ['270300']),
+      DT('Accrued commissions', ['250200']),
+      DT('Computer equipment — accelerated capital allowances', ['140100', '140110']),
+      DT('Development costs (software) — accelerated capital allowances', ['150100', '150110']),
+      DT('FRS 116 leases (ROU vs lease liability)', ['140300', '140310', '140340', '250900']),
     ],
 
     openingCurrentTaxPayable: 0,

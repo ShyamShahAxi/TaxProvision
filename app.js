@@ -205,11 +205,16 @@ function computedSources() {
   };
 }
 
-/* Temporary difference for a deferred item — computed for FRS 116, else stored. */
+/* Temporary difference for a deferred item. Items linked to TB accounts
+   (tdAccounts) sum those accounts' opening/closing balances — an asset's net
+   carrying amount is a taxable difference (DTL, positive); a provision's credit
+   balance is a deductible difference (DTA, negative). Otherwise use stored values. */
 function defTD(x, which) {
+  if (Array.isArray(x.tdAccounts) && x.tdAccounts.length) return x.tdAccounts.reduce((s, c) => s + leaseAmt(c, which), 0);
   if (x.source === 'ifrs16') return leaseTD(which);
   return num(which === 'opening' ? x.openingTD : x.closingTD);
 }
+function defLinked(x) { return (Array.isArray(x.tdAccounts) && x.tdAccounts.length) || x.source === 'ifrs16'; }
 
 /* Effective amount of an add-back/deduction. The `account` field selects a
    source: a computed value (@…), a specific TB column (CODE#opening|debit|credit),
@@ -715,7 +720,8 @@ function renderDeferred(P) {
   } else {
     body.innerHTML = provision.deferredItems.map((x, i) => {
       const op = defTD(x, 'opening'), cl = defTD(x, 'closing');
-      if (x.source === 'ifrs16') {
+      if (defLinked(x)) {
+        // TB-linked → read-only, formatted, no delete.
         return `<tr data-line="deferredItems" data-idx="${i}">
           <td>${esc(x.label)} <span class="src-tag">TB</span></td>
           <td class="num" title="${exact(op)}">${acc(op)}</td>
@@ -1354,12 +1360,15 @@ function restoreSampleLines() {
   });
   const havePrem = new Set((provision.insurancePremiums || []).map(p => p.policy));
   s.insurancePremiums.forEach(p => { if (!havePrem.has(p.policy)) provision.insurancePremiums.push(p); });
-  const haveDef = new Set((provision.deferredItems || []).map(x => x.label));
+  // Migrate deferred items to the TB-linked versions (drop old manual / ifrs16 copies).
+  const stdDefLabels = new Set(s.deferredItems.map(x => x.label));
+  provision.deferredItems = (provision.deferredItems || []).filter(x => x.source !== 'ifrs16' && !stdDefLabels.has(x.label));
+  const haveDef = new Set(provision.deferredItems.map(x => x.label));
   s.deferredItems.forEach(x => { if (!haveDef.has(x.label)) provision.deferredItems.push(x); });
   if (!provision.tb.length && s.tb.length) provision.tb = s.tb;
   saveProvision();
 }
-const HEAL_KEY = 'taxprov.heal.v2';
+const HEAL_KEY = 'taxprov.heal.v3';
 if (localStorage.getItem(INIT_KEY) && !localStorage.getItem(HEAL_KEY)) {
   restoreSampleLines();  // existing sessions: top up standard lines lost to earlier ✕ deletes
 }
