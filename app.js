@@ -1233,6 +1233,7 @@ function wire() {
     }
     loadSample(); saveSettings(); saveProvision(); renderAll(); toast('Sample loaded');
   });
+  $('#btn-restore').addEventListener('click', () => { restoreSampleLines(); renderAll(); toast('Automated lines restored'); });
   $('#btn-clear').addEventListener('click', () => {
     if (!confirm('Clear all provision data from this browser?')) return;
     localStorage.removeItem(STORE_KEY); localStorage.removeItem(SETTINGS_KEY); localStorage.removeItem(PREMDOC_KEY);
@@ -1263,5 +1264,30 @@ if (!localStorage.getItem(INIT_KEY)) {
   saveProvision();
   localStorage.setItem(INIT_KEY, '1');
 }
+/* Non-destructive self-heal: re-add any missing standard automated lines
+   (premiums, add-backs/deductions, deferred items) that were deleted before
+   the ✕ was removed from locked rows. Only ADDS what's missing — never removes
+   imports (stat adjustments), manual entries, or edits. Runs once. */
+function restoreSampleLines() {
+  if (typeof sampleProvision !== 'function') return;
+  const s = sampleProvision();
+  const key = x => x.account || x.label;
+  ['addBacks', 'deductions'].forEach(list => {
+    const have = new Set((provision[list] || []).map(key));
+    s[list].forEach(x => { if (!have.has(key(x))) provision[list].push(x); });
+  });
+  const havePrem = new Set((provision.insurancePremiums || []).map(p => p.policy));
+  s.insurancePremiums.forEach(p => { if (!havePrem.has(p.policy)) provision.insurancePremiums.push(p); });
+  const haveDef = new Set((provision.deferredItems || []).map(x => x.label));
+  s.deferredItems.forEach(x => { if (!haveDef.has(x.label)) provision.deferredItems.push(x); });
+  if (!provision.tb.length && s.tb.length) provision.tb = s.tb;
+  saveProvision();
+}
+const HEAL_KEY = 'taxprov.heal.v1';
+if (localStorage.getItem(INIT_KEY) && !localStorage.getItem(HEAL_KEY)) {
+  restoreSampleLines();  // existing sessions: top up standard lines lost to earlier ✕ deletes
+}
+localStorage.setItem(HEAL_KEY, '1');
+
 wire();
 renderAll();
