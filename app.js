@@ -15,6 +15,7 @@ const SETTINGS_KEY = 'taxprov.settings.v1';
 const defaultSettings = {
   companyName: 'AxiCorp Pte Ltd',
   currency: '$',
+  entity: 'AUS155',        // entity code used to filter the stat-adjustment import
   ya: '2026',
   periodEnd: null,          // ISO yyyy-mm-dd basis-period end
   taxRate: 17,              // Singapore corporate tax rate %
@@ -363,7 +364,7 @@ function renderAudit() {
   } else {
     body.innerHTML = provision.auditAdjustments.map((e, i) => `<tr data-line="auditAdjustments" data-idx="${i}">
       <td><select class="type-sel" data-key="account" style="min-width:220px">${tbOptions(e.account)}</select></td>
-      <td><input class="desc-in" data-key="description" value="${attr(e.description)}" placeholder="Reason for adjustment"></td>
+      <td><input class="desc-in" data-key="description" value="${attr(e.description)}" placeholder="Reason for adjustment">${e.source === 'stat' ? '<span class="src-tag">STAT</span>' : ''}</td>
       <td class="num"><input class="amt" type="number" step="0.01" data-key="debit" value="${e.debit}"></td>
       <td class="num"><input class="amt" type="number" step="0.01" data-key="credit" value="${e.credit}"></td>
       <td class="act"><button class="ghost sm" data-act="del-line" title="Remove">&times;</button></td>
@@ -660,6 +661,7 @@ function renderNotes(P) {
 function renderData() {
   $('#s-companyName').value = settings.companyName;
   $('#s-currency').value = settings.currency;
+  $('#s-entity').value = settings.entity;
   $('#s-ya').value = settings.ya;
   $('#s-periodEnd').value = settings.periodEnd || '';
   $('#s-taxRate').value = settings.taxRate;
@@ -777,6 +779,38 @@ function exportTbCsv() {
     .forEach(a => { const adj = am[String(a.code)] || 0; rows.push([a.code, a.name, round2(a.opening), round2(a.debit), round2(a.credit), round2(a.closing), round2(adj), round2(num(a.closing) + adj)]); });
   download(`trial-balance-ya${settings.ya}.csv`, toCsv(rows), 'text/csv');
 }
+/* Import a transfer-pricing / statutory adjustment file. It is multi-entity;
+   rows are filtered to settings.entity and posted as audit adjustments against
+   the matching TB account (Net (USD): positive = debit, negative = credit). */
+function importStatCsv(rows) {
+  let h = -1; const col = {};
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i].map(c => String(c).trim());
+    if (r.includes('Entity') && r.includes('Account no')) { h = i; r.forEach((n, idx) => { if (n && !(n in col)) col[n] = idx; }); break; }
+  }
+  if (h < 0) { toast('Could not find the stat-adjustment header (needs Entity & Account no columns)'); return; }
+  const iEnt = col['Entity'], iAcc = col['Account no'], iDesc = col['Description'];
+  const iNet = col['Net (USD)'], iDr = col['DR (Txn)'], iCr = col['CR (Txn)'];
+  const entity = (settings.entity || '').trim();
+  if (!entity) { toast('Set the entity code in Data & Settings first'); return; }
+  const added = [];
+  for (let i = h + 1; i < rows.length; i++) {
+    const r = rows[i];
+    if (String(r[iEnt] || '').trim().toLowerCase() !== entity.toLowerCase()) continue;
+    const code = String(r[iAcc] || '').trim();
+    if (!code || !/\d/.test(code)) continue;
+    let net = iNet != null ? cleanNum(r[iNet]) : 0;
+    if (!net && iDr != null && iCr != null) net = cleanNum(r[iDr]) - cleanNum(r[iCr]);
+    if (Math.abs(net) < 0.005) continue;
+    added.push({ id: uid(), account: code, description: String(r[iDesc] || 'Stat adjustment').trim(), debit: net > 0 ? round2(net) : 0, credit: net < 0 ? round2(-net) : 0, source: 'stat' });
+  }
+  if (!added.length) { toast(`No rows for entity “${entity}” found`); return; }
+  provision.auditAdjustments = provision.auditAdjustments.filter(e => e.source !== 'stat').concat(added);
+  saveProvision(); renderAll();
+  const dr = added.reduce((s, e) => s + e.debit, 0), cr = added.reduce((s, e) => s + e.credit, 0);
+  toast(`${added.length} stat adjustments imported for ${entity}` + (Math.abs(dr - cr) < 0.5 ? '' : ' (⚠ Dr≠Cr)'));
+}
+
 function exportAuditCsv() {
   const tm = tbMap();
   const rows = [['Account', 'Account name', 'Description', 'Debit', 'Credit']];
@@ -906,6 +940,13 @@ function wire() {
     provision.auditAdjustments.push({ id: uid(), account: '', description: '', debit: 0, credit: 0 });
     saveProvision(); render();
   });
+  $('#btn-import-stat').addEventListener('click', () => $('#stat-file').click());
+  $('#stat-file').addEventListener('change', e => {
+    const file = e.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => { importStatCsv(parseCsv(reader.result)); e.target.value = ''; };
+    reader.readAsText(file);
+  });
   $('#exp-audit').addEventListener('click', exportAuditCsv);
 
   // Pull FAR data from the same browser (shared origin on the live site)
@@ -914,6 +955,7 @@ function wire() {
   $('#btn-save-settings').addEventListener('click', () => {
     settings.companyName = $('#s-companyName').value.trim() || 'Company';
     settings.currency = $('#s-currency').value.trim() || '$';
+    settings.entity = $('#s-entity').value.trim();
     settings.ya = $('#s-ya').value.trim() || '';
     settings.periodEnd = $('#s-periodEnd').value || null;
     settings.taxRate = num($('#s-taxRate').value);
@@ -975,7 +1017,7 @@ function readJson(e, cb) {
    On the very first visit (nothing saved yet) seed the AUS155 sample so the
    app opens with data instead of a blank statement. The init marker means an
    explicit "Clear all data" stays cleared and we never overwrite real work. */
-const INIT_KEY = 'taxprov.init.v3';
+const INIT_KEY = 'taxprov.init.v4';
 if (!localStorage.getItem(INIT_KEY)) {
   loadSample();
   saveSettings();
