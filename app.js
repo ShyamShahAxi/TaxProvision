@@ -67,10 +67,14 @@ const $ = sel => document.querySelector(sel);
 const $$ = sel => Array.from(document.querySelectorAll(sel));
 function uid() { return 'L' + Date.now().toString(36) + Math.floor(Math.random() * 1e4).toString(36); }
 function num(v) { const n = parseFloat(v); return isFinite(n) ? n : 0; }
+/* Display is whole-number for readability; the underlying values keep full
+   precision (decimals) for every calculation and for CSV export. `exact()`
+   gives the precise 2-dp figure used in hover tooltips. */
 function fmt(v) {
   const n = num(v);
-  return settings.currency + Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return settings.currency + Math.abs(n).toLocaleString(undefined, { maximumFractionDigits: 0 });
 }
+function exact(v) { return settings.currency + num(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 /* Accounting presentation: negatives in parentheses. */
 function acc(v) { const n = num(v); return n < -0.005 ? '(' + fmt(n) + ')' : fmt(n); }
 function pct(v) { return num(v).toLocaleString(undefined, { maximumFractionDigits: 2 }) + '%'; }
@@ -305,15 +309,11 @@ function renderTB() {
     body.innerHTML = rows.map(({ a, i }) => {
       const adj = am[String(a.code)] || 0;
       const adjusted = num(a.closing) + adj;
+      const c = (v) => `<td class="num" title="${exact(v)}">${money(v)}</td>`;
       return `<tr data-line="tb" data-idx="${i}">
         <td class="tb-code">${esc(a.code)}</td>
         <td class="tb-name" title="${attr(a.name)}">${esc(a.name)}</td>
-        <td class="num">${money(a.opening)}</td>
-        <td class="num">${money(a.debit)}</td>
-        <td class="num">${money(a.credit)}</td>
-        <td class="num">${money(a.closing)}</td>
-        <td class="num">${money(adj)}</td>
-        <td class="num">${money(adjusted)}</td>
+        ${c(a.opening)}${c(a.debit)}${c(a.credit)}${c(a.closing)}${c(adj)}${c(adjusted)}
         <td class="act"></td>
       </tr>`;
     }).join('');
@@ -338,9 +338,9 @@ function renderTB() {
   });
   const pat = -plAll, pbt = pat + taxExp;
   const pnl = `
-    <div class="pnl-item accent"><div class="lbl">Profit before tax (per TB)</div><div class="val ${pbt < 0 ? 'neg' : ''}">${acc(pbt)}</div></div>
-    <div class="pnl-item"><div class="lbl">Tax expense (per TB)</div><div class="val">${acc(-taxExp)}</div></div>
-    <div class="pnl-item accent"><div class="lbl">Profit after tax (per TB)</div><div class="val ${pat < 0 ? 'neg' : ''}">${acc(pat)}</div></div>`;
+    <div class="pnl-item accent" title="Exact: ${exact(pbt)}"><div class="lbl">Profit before tax (per TB)</div><div class="val ${pbt < 0 ? 'neg' : ''}">${acc(pbt)}</div></div>
+    <div class="pnl-item" title="Exact: ${exact(-taxExp)}"><div class="lbl">Tax expense (per TB)</div><div class="val">${acc(-taxExp)}</div></div>
+    <div class="pnl-item accent" title="Exact: ${exact(pat)}"><div class="lbl">Profit after tax (per TB)</div><div class="val ${pat < 0 ? 'neg' : ''}">${acc(pat)}</div></div>`;
   $('#tb-pnl-top').innerHTML = pnl;
   $('#tb-pnl-bottom').innerHTML = pnl;
 
@@ -349,7 +349,8 @@ function renderTB() {
   $('#tb-note').innerHTML =
     `Total debit balances ${money(drBal)} · total credit balances ${money(crBal)} · ` +
     (balanced ? `in balance (difference ${money(diff)} is source rounding).` : `<span class="neg">out of balance by ${money(diff)}.</span>`) +
-    ` &nbsp;PBT per the trial balance is the raw accounting result; the Current Tax computation uses statutory PBT of ${fmt(provision.profitBeforeTax)} — the difference is the transfer-pricing / non-TCG consolidation adjustments.`;
+    ` &nbsp;PBT per the trial balance is the raw accounting result; the Current Tax computation uses statutory PBT of ${fmt(provision.profitBeforeTax)} — the difference is the transfer-pricing / non-TCG consolidation adjustments.` +
+    ` &nbsp;Figures display as whole numbers; full precision is retained for all calculations and exports (hover a value for the exact amount).`;
 }
 
 /* ----- Audit adjustments ----- */
@@ -389,8 +390,9 @@ function lineRows(list, listName) {
   return list.map((x, i) => {
     const linked = !!x.account;
     const missing = linked && !map[String(x.account)];
+    const linkedAmt = Math.abs(adjustedClosing(x.account, map, am));
     const amtCell = linked
-      ? `<span class="note-num">${fmt(Math.abs(adjustedClosing(x.account, map, am)))}</span> <span class="src-tag">TB</span>`
+      ? `<span class="note-num" title="${exact(linkedAmt)}">${fmt(linkedAmt)}</span> <span class="src-tag">TB</span>`
       : `<input class="amt" type="number" step="0.01" data-key="amount" value="${x.amount}">`;
     return `<tr data-line="${listName}" data-idx="${i}">
       <td class="indent">
