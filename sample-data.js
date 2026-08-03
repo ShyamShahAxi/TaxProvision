@@ -91,6 +91,7 @@ function sampleProvision() {
 
     openingCurrentTaxPayable: 0,
     priorYearAdjustment: 0,
+    priorYearProvisionCarried: 30004, // FY25 net tax provision still outstanding (return not closed)
     taxPaid: 0,
     far: null,
   };

@@ -51,6 +51,7 @@ const emptyProvision = () => ({
   deferredItems: [],        // {id,label,openingTD,closingTD,source}
   openingCurrentTaxPayable: 0,
   priorYearAdjustment: 0,   // (over)/under provision — under = positive
+  priorYearProvisionCarried: 0, // FY-prior net tax provision still outstanding (b/f)
   taxPaid: 0,
   far: null,                // {companyName,reportingDate,priorDate,importedAt,closing,opening}
 });
@@ -818,19 +819,24 @@ function renderRecon(P) {
 /* ----- Provision movement ----- */
 function renderMovement(P) {
   if (hasCurrentTaxTB()) {
-    // Opening & closing tie to the TB current-tax accounts; payments/refunds/FX
-    // reconcile the roll-forward (FX revaluation sits in the stat adjustment).
-    const openPay = currentTaxPayableTB('opening');
-    const closePay = currentTaxPayableTB('closing');
-    const paidFx = closePay - openPay - P.currentTax - P.priorAdj; // balancing (net cash + FX)
+    // Proof: the closing provision is the FY26 charge plus the FY25 provision
+    // still outstanding (return not yet closed). FX revaluation (UFX journals,
+    // part of the stat adjustment) reconciles the expected balance to the TB.
+    const charge = P.currentTax;
+    const priorProv = num(provision.priorYearProvisionCarried || 0);
+    const expected = charge + priorProv + P.priorAdj;   // expected closing payable
+    const tbClose = currentTaxPayableTB('closing');
+    const fxReval = tbClose - expected;                  // balancing to TB
     $('#move-current').innerHTML = `
-      <tr><td class="label">Opening current tax payable / (receivable) <span class="src-tag">TB</span></td><td class="num" title="${exact(openPay)}">${acc(openPay)}</td></tr>
-      <tr><td class="label">Current year tax charge</td><td class="num">${acc(P.currentTax)}</td></tr>
+      <tr><td class="label">Current year tax charge (YA ${esc(settings.ya)})</td><td class="num" title="${exact(charge)}">${acc(charge)}</td></tr>
+      <tr><td class="label">Prior year provision carried — FY25 return still open</td>
+          <td class="num"><input class="amt" type="number" step="0.01" data-scalar="priorYearProvisionCarried" value="${provision.priorYearProvisionCarried}"></td></tr>
       <tr><td class="label">(Over)/under provision — prior years</td>
           <td class="num"><input class="amt" type="number" step="0.01" data-scalar="priorYearAdjustment" value="${provision.priorYearAdjustment}"></td></tr>
-      <tr><td class="label">Tax paid, refunds &amp; FX revaluation</td><td class="num" title="${exact(paidFx)}">${acc(paidFx)}</td></tr>
-      <tr class="grand"><td class="label">Closing current tax payable / (receivable) <span class="src-tag">TB</span></td><td class="num" title="${exact(closePay)}">${acc(closePay)}</td></tr>
-      <tr><td class="label"><span class="hint-text">UFX (FX revaluation) journals form part of the transfer-pricing stat adjustment; here they sit within the payments &amp; FX line.</span></td><td></td></tr>`;
+      <tr class="grand"><td class="label">Expected closing current tax payable / (receivable)</td><td class="num" title="${exact(expected)}">${acc(expected)}</td></tr>
+      <tr><td class="label">FX revaluation (per stat adjustment)</td><td class="num" title="${exact(fxReval)}">${acc(fxReval)}</td></tr>
+      <tr class="subtotal"><td class="label">Closing per trial balance <span class="src-tag">TB</span></td><td class="num" title="${exact(tbClose)}">${acc(tbClose)}</td></tr>
+      <tr><td class="label"><span class="hint-text">Positive = payable, negative = net receivable. UFX (FX revaluation) journals form part of the transfer-pricing stat adjustment, shown here as the reconciling line to the TB.</span></td><td></td></tr>`;
   } else {
     $('#move-current').innerHTML = `
       <tr><td class="label">Opening current tax payable</td>
@@ -1424,9 +1430,10 @@ function restoreSampleLines() {
   const haveDef = new Set(provision.deferredItems.map(x => x.label));
   s.deferredItems.forEach(x => { if (!haveDef.has(x.label)) provision.deferredItems.push(x); });
   if (!provision.tb.length && s.tb.length) provision.tb = s.tb;
+  if (provision.priorYearProvisionCarried == null) provision.priorYearProvisionCarried = s.priorYearProvisionCarried || 0;
   saveProvision();
 }
-const HEAL_KEY = 'taxprov.heal.v4';
+const HEAL_KEY = 'taxprov.heal.v5';
 if (localStorage.getItem(INIT_KEY) && !localStorage.getItem(HEAL_KEY)) {
   restoreSampleLines();  // existing sessions: top up standard lines lost to earlier ✕ deletes
 }
