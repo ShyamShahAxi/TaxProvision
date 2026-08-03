@@ -32,7 +32,8 @@ const defaultSettings = {
 /* ---------- Provision (one Year of Assessment) ---------- */
 const emptyProvision = () => ({
   profitBeforeTax: 0,
-  tb: [],                   // trial balance: {id,code,name,debit,credit}
+  tb: [],                   // trial balance: {id,code,name,opening,debit,credit,closing}
+  auditAdjustments: [],     // {id,account,description,debit,credit}
   addBacks: [],             // {id,label,amount,type:'permanent'|'temporary',source,account}
   deductions: [],           // {id,label,amount,type,source,account}
   lossesBroughtForward: 0,
@@ -95,17 +96,32 @@ function download(name, text, mime) {
    ============================================================= */
 function sum(list, key) { return list.reduce((t, x) => t + num(x[key]), 0); }
 
-/* ---------- Trial balance linkage ---------- */
+/* ---------- Trial balance & audit-adjustment linkage ---------- */
 function tbMap() {
   const m = {};
   provision.tb.forEach(a => { if (a.code) m[String(a.code)] = a; });
   return m;
 }
-function tbNet(code, map) { const a = (map || tbMap())[String(code)]; return a ? num(a.debit) - num(a.credit) : 0; }
-/* Effective amount of an add-back/deduction: pulled from the TB when linked,
-   otherwise the manually entered amount. Sign is set by the section it sits in
-   (add-back vs deduction), so we take the magnitude of the account balance. */
-function lineAmt(x, map) { return x.account ? Math.abs(tbNet(x.account, map)) : num(x.amount); }
+/* Net audit adjustment (debit − credit) per account code. */
+function auditMap() {
+  const m = {};
+  provision.auditAdjustments.forEach(e => {
+    if (!e.account) return;
+    m[String(e.account)] = (m[String(e.account)] || 0) + num(e.debit) - num(e.credit);
+  });
+  return m;
+}
+/* Closing balance of an account after audit adjustments (signed: Dr +, Cr −). */
+function adjustedClosing(code, tm, am) {
+  const a = (tm || tbMap())[String(code)];
+  const base = a ? num(a.closing) : 0;
+  const adj = (am || auditMap())[String(code)] || 0;
+  return base + adj;
+}
+/* Effective amount of an add-back/deduction: pulled from the TB (adjusted
+   closing balance) when linked, otherwise the manually entered amount. Sign is
+   set by the section it sits in, so we take the magnitude of the balance. */
+function lineAmt(x, tm, am) { return x.account ? Math.abs(adjustedClosing(x.account, tm, am)) : num(x.amount); }
 
 /* Singapore tax exemption on chargeable income. */
 function exemptionAmount(ci) {
@@ -128,8 +144,8 @@ function recompute() {
   const dedPerm = p.deductions.filter(x => x.type !== 'temporary');
   const dedTemp = p.deductions.filter(x => x.type === 'temporary');
 
-  const map = tbMap();
-  const tot = list => list.reduce((t, x) => t + lineAmt(x, map), 0);
+  const map = tbMap(), am = auditMap();
+  const tot = list => list.reduce((t, x) => t + lineAmt(x, map, am), 0);
   const addPermTotal = tot(addPerm);
   const addTempTotal = tot(addTemp);
   const dedPermTotal = tot(dedPerm);
@@ -197,6 +213,7 @@ function render() {
   const P = recompute();
   if (activeTab === 'dashboard') renderDashboard(P);
   else if (activeTab === 'tb') renderTB();
+  else if (activeTab === 'audit') renderAudit();
   else if (activeTab === 'current') renderCurrent(P);
   else if (activeTab === 'deferred') renderDeferred(P);
   else if (activeTab === 'recon') renderRecon(P);
@@ -244,25 +261,72 @@ function renderDashboard(P) {
 }
 
 /* ----- Trial balance ----- */
+let tbFilter = '';
 function renderTB() {
   const body = $('#tb-body');
+  const am = auditMap();
+  const q = tbFilter.trim().toLowerCase();
+  // Keep original indices so edits map back, but display sorted by account number.
+  const rows = provision.tb.map((a, i) => ({ a, i }))
+    .sort((x, y) => String(x.a.code).localeCompare(String(y.a.code), undefined, { numeric: true }))
+    .filter(({ a }) => !q || String(a.code).toLowerCase().includes(q) || String(a.name).toLowerCase().includes(q));
+
   if (!provision.tb.length) {
-    body.innerHTML = `<tr class="empty-row"><td colspan="5">No accounts. Add one, import a CSV (Code, Name, Debit, Credit), or pull from FAR in Data &amp; Settings.</td></tr>`;
+    body.innerHTML = `<tr class="empty-row"><td colspan="9">No accounts. Add one, import a CSV, load the sample, or pull from FAR in Data &amp; Settings.</td></tr>`;
+  } else if (!rows.length) {
+    body.innerHTML = `<tr class="empty-row"><td colspan="9">No accounts match “${esc(tbFilter)}”.</td></tr>`;
   } else {
-    body.innerHTML = provision.tb.map((a, i) => `<tr data-line="tb" data-idx="${i}">
-      <td><input class="desc-in" style="min-width:90px" data-key="code" value="${attr(a.code)}" placeholder="Code"></td>
-      <td><input class="desc-in" data-key="name" value="${attr(a.name)}" placeholder="Account name"></td>
-      <td class="num"><input class="amt" type="number" step="0.01" data-key="debit" value="${a.debit}"></td>
-      <td class="num"><input class="amt" type="number" step="0.01" data-key="credit" value="${a.credit}"></td>
+    body.innerHTML = rows.map(({ a, i }) => {
+      const adj = am[String(a.code)] || 0;
+      const adjusted = num(a.closing) + adj;
+      return `<tr data-line="tb" data-idx="${i}">
+        <td><input class="desc-in" style="min-width:88px" data-key="code" value="${attr(a.code)}"></td>
+        <td><input class="desc-in" data-key="name" value="${attr(a.name)}"></td>
+        <td class="num"><input class="amt" type="number" step="0.01" data-key="opening" value="${a.opening}"></td>
+        <td class="num"><input class="amt" type="number" step="0.01" data-key="debit" value="${a.debit}"></td>
+        <td class="num"><input class="amt" type="number" step="0.01" data-key="credit" value="${a.credit}"></td>
+        <td class="num"><input class="amt" type="number" step="0.01" data-key="closing" value="${a.closing}"></td>
+        <td class="num ${adj ? (adj > 0 ? 'pos' : 'neg') : ''}">${adj ? acc(adj) : '—'}</td>
+        <td class="num">${acc(adjusted)}</td>
+        <td class="act"><button class="ghost sm" data-act="del-line" title="Remove">&times;</button></td>
+      </tr>`;
+    }).join('');
+  }
+  const t = k => sum(provision.tb, k);
+  const adjTot = provision.auditAdjustments.reduce((s, e) => s + num(e.debit) - num(e.credit), 0);
+  const closeTot = t('closing');
+  $('#tb-foot').innerHTML = `<tr>
+    <td colspan="2">Total (${provision.tb.length} accounts${q ? `, ${rows.length} shown` : ''})</td>
+    <td class="num">${fmt(t('opening'))}</td><td class="num">${fmt(t('debit'))}</td><td class="num">${fmt(t('credit'))}</td>
+    <td class="num">${acc(closeTot)}</td><td class="num">${acc(adjTot)}</td><td class="num">${acc(closeTot + adjTot)}</td><td></td></tr>`;
+  const bal = Math.abs(closeTot + adjTot) < 1;
+  $('#tb-note').innerHTML = bal
+    ? 'Trial balance is in balance (adjusted closing balances net to nil).'
+    : `Adjusted closing balances net to ${acc(closeTot + adjTot)} — a complete trial balance should net to nil (small differences are source rounding).`;
+}
+
+/* ----- Audit adjustments ----- */
+function renderAudit() {
+  const body = $('#audit-body');
+  const tm = tbMap();
+  const nameFor = code => { const a = tm[String(code)]; return a ? a.name : ''; };
+  if (!provision.auditAdjustments.length) {
+    body.innerHTML = `<tr class="empty-row"><td colspan="5">No audit adjustments. Add one to post a debit/credit against a trial-balance account.</td></tr>`;
+  } else {
+    body.innerHTML = provision.auditAdjustments.map((e, i) => `<tr data-line="auditAdjustments" data-idx="${i}">
+      <td><select class="type-sel" data-key="account" style="min-width:220px">${tbOptions(e.account)}</select></td>
+      <td><input class="desc-in" data-key="description" value="${attr(e.description)}" placeholder="Reason for adjustment"></td>
+      <td class="num"><input class="amt" type="number" step="0.01" data-key="debit" value="${e.debit}"></td>
+      <td class="num"><input class="amt" type="number" step="0.01" data-key="credit" value="${e.credit}"></td>
       <td class="act"><button class="ghost sm" data-act="del-line" title="Remove">&times;</button></td>
     </tr>`).join('');
   }
-  const dr = sum(provision.tb, 'debit'), cr = sum(provision.tb, 'credit');
-  $('#tb-foot').innerHTML = `<tr><td colspan="2">Total (${provision.tb.length} accounts)</td><td class="num">${fmt(dr)}</td><td class="num">${fmt(cr)}</td><td></td></tr>`;
+  const dr = sum(provision.auditAdjustments, 'debit'), cr = sum(provision.auditAdjustments, 'credit');
+  $('#audit-foot').innerHTML = `<tr><td colspan="2">Total</td><td class="num">${fmt(dr)}</td><td class="num">${fmt(cr)}</td><td></td></tr>`;
   const diff = dr - cr;
-  $('#tb-note').innerHTML = Math.abs(diff) < 0.005
-    ? 'Trial balance is in balance (debits = credits).'
-    : `Debits − credits = ${acc(diff)}. A partial trial balance (only the accounts you link) need not balance; a complete one should.`;
+  $('#audit-note').innerHTML = Math.abs(diff) < 0.005
+    ? 'Audit adjustments balance (debits = credits). Net effect flows to the Trial Balance and any linked computation line.'
+    : `Debits − credits = ${acc(diff)}. Audit journals should balance to nil before posting.`;
 }
 
 function tbOptions(selected) {
@@ -274,12 +338,12 @@ function tbOptions(selected) {
 /* ----- Current tax computation ----- */
 function lineRows(list, listName) {
   if (!list.length) return `<tr><td class="indent" colspan="4"><span class="hint-text">No items.</span></td></tr>`;
-  const map = tbMap();
+  const map = tbMap(), am = auditMap();
   return list.map((x, i) => {
     const linked = !!x.account;
     const missing = linked && !map[String(x.account)];
     const amtCell = linked
-      ? `<span class="note-num">${fmt(Math.abs(tbNet(x.account, map)))}</span> <span class="src-tag">TB</span>`
+      ? `<span class="note-num">${fmt(Math.abs(adjustedClosing(x.account, map, am)))}</span> <span class="src-tag">TB</span>`
       : `<input class="amt" type="number" step="0.01" data-key="amount" value="${x.amount}">`;
     return `<tr data-line="${listName}" data-idx="${i}">
       <td class="indent">
@@ -625,27 +689,50 @@ function parseCsv(text) {
   });
   return rows;
 }
+/* Parse a number that may use commas, parentheses for negatives, or blanks/dashes. */
+function cleanNum(v) {
+  let s = String(v == null ? '' : v).trim().replace(/[,"\s]/g, '');
+  if (s === '' || s === '-' || /^#/.test(s)) return 0;
+  let neg = false;
+  if (/^\(.*\)$/.test(s)) { neg = true; s = s.slice(1, -1); }
+  const n = parseFloat(s);
+  return isFinite(n) ? (neg ? -n : n) : 0;
+}
+function looksNumeric(v) { const s = String(v == null ? '' : v).trim(); return s !== '' && /^[\(\)\-\d., "]+$/.test(s); }
+
+/* Accepts either Code,Name,Opening,Debit,Credit,Closing (full movement TB) or
+   Code,Name,Debit,Credit. Header/preamble rows (non-numeric) are skipped. */
 function importTbCsv(rows) {
   if (!rows.length) { toast('Empty CSV'); return; }
-  // Skip a header row if the debit/credit columns aren't numeric.
-  let start = 0;
-  const isNum = v => v != null && v !== '' && isFinite(parseFloat(String(v).replace(/[, ]/g, '')))
-    && /^-?[\d., ]+$/.test(String(v).trim());
-  if (!isNum(rows[0][2]) && !isNum(rows[0][3])) start = 1;
-  const clean = v => num(String(v == null ? '' : v).replace(/[, ]/g, ''));
   const tb = [];
-  for (let i = start; i < rows.length; i++) {
-    const r = rows[i];
-    if (!r.length || (!r[0] && !r[1])) continue;
-    tb.push({ id: uid(), code: (r[0] || '').trim(), name: (r[1] || '').trim(), debit: clean(r[2]), credit: clean(r[3]) });
+  for (const r of rows) {
+    if (!r.length || !r[0]) continue;
+    if (/^total/i.test(String(r[0]).trim())) continue;
+    if (!/\d/.test(String(r[0]))) continue;           // account codes contain digits; skips headers
+    const wide = r.length >= 6 && (looksNumeric(r[5]) || looksNumeric(r[2]));
+    if (wide) {
+      tb.push({ id: uid(), code: String(r[0]).trim(), name: String(r[1] || '').trim(), opening: cleanNum(r[2]), debit: cleanNum(r[3]), credit: cleanNum(r[4]), closing: cleanNum(r[5]) });
+    } else {
+      const debit = cleanNum(r[2]), credit = cleanNum(r[3]);
+      tb.push({ id: uid(), code: String(r[0]).trim(), name: String(r[1] || '').trim(), opening: 0, debit, credit, closing: debit - credit });
+    }
   }
+  if (!tb.length) { toast('No account rows found in CSV'); return; }
   provision.tb = tb;
   saveProvision(); renderAll(); toast(tb.length + ' accounts imported');
 }
 function exportTbCsv() {
-  const rows = [['Code', 'Name', 'Debit', 'Credit']];
-  provision.tb.forEach(a => rows.push([a.code, a.name, round2(a.debit), round2(a.credit)]));
+  const am = auditMap();
+  const rows = [['Code', 'Name', 'Opening', 'Debit', 'Credit', 'Closing', 'Audit adj', 'Adjusted closing']];
+  provision.tb.slice().sort((a, b) => String(a.code).localeCompare(String(b.code), undefined, { numeric: true }))
+    .forEach(a => { const adj = am[String(a.code)] || 0; rows.push([a.code, a.name, round2(a.opening), round2(a.debit), round2(a.credit), round2(a.closing), round2(adj), round2(num(a.closing) + adj)]); });
   download(`trial-balance-ya${settings.ya}.csv`, toCsv(rows), 'text/csv');
+}
+function exportAuditCsv() {
+  const tm = tbMap();
+  const rows = [['Account', 'Account name', 'Description', 'Debit', 'Credit']];
+  provision.auditAdjustments.forEach(e => { const a = tm[String(e.account)]; rows.push([e.account, a ? a.name : '', e.description, round2(e.debit), round2(e.credit)]); });
+  download(`audit-adjustments-ya${settings.ya}.csv`, toCsv(rows), 'text/csv');
 }
 
 /* =============================================================
@@ -712,7 +799,7 @@ function onFieldInput(e) {
     const item = list[+row.dataset.idx];
     if (!item) return;
     const key = t.dataset.key;
-    const stringKey = key === 'label' || key === 'type' || key === 'code' || key === 'name' || key === 'account';
+    const stringKey = key === 'label' || key === 'type' || key === 'code' || key === 'name' || key === 'account' || key === 'description';
     item[key] = stringKey ? t.value : (t.value === '' ? 0 : num(t.value));
     saveProvision();
     // 'type' and 'account' change layout/derived amounts — need a full re-render.
@@ -754,6 +841,7 @@ function wire() {
     provision.tb.push({ id: uid(), code: '', name: '', debit: 0, credit: 0 });
     saveProvision(); render();
   });
+  $('#tb-search').addEventListener('input', e => { tbFilter = e.target.value; renderTB(); });
   $('#btn-import-tb').addEventListener('click', () => $('#tb-file').click());
   $('#tb-file').addEventListener('change', e => {
     const file = e.target.files[0]; if (!file) return;
@@ -762,6 +850,13 @@ function wire() {
     reader.readAsText(file);
   });
   $('#exp-tb').addEventListener('click', exportTbCsv);
+
+  // Audit adjustments
+  $('#btn-add-audit').addEventListener('click', () => {
+    provision.auditAdjustments.push({ id: uid(), account: '', description: '', debit: 0, credit: 0 });
+    saveProvision(); render();
+  });
+  $('#exp-audit').addEventListener('click', exportAuditCsv);
 
   // Pull FAR data from the same browser (shared origin on the live site)
   $('#btn-far-browser').addEventListener('click', importFarFromBrowser);
@@ -830,7 +925,7 @@ function readJson(e, cb) {
    On the very first visit (nothing saved yet) seed the AUS155 sample so the
    app opens with data instead of a blank statement. The init marker means an
    explicit "Clear all data" stays cleared and we never overwrite real work. */
-const INIT_KEY = 'taxprov.init.v2';
+const INIT_KEY = 'taxprov.init.v3';
 if (!localStorage.getItem(INIT_KEY)) {
   loadSample();
   saveSettings();

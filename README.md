@@ -13,7 +13,8 @@ Like FAR, it is a single static web app — no server, no build step, no depende
 | Tab | Details |
 |-----|---------|
 | **Dashboard** | KPIs — profit before tax, chargeable income, current tax, deferred tax charge/credit, total tax expense and effective tax rate — plus the tax charge to P&L and the FAR link status |
-| **Trial Balance** | GL accounts and balances (add/import CSV/export). Add-backs and deductions **link to a TB account**, so the amount pulls from the balance automatically — edit the TB and the computation updates |
+| **Trial Balance** | Full GL sorted by account number (opening · debit · credit · closing), with an **audit-adjustment column** and adjusted closing. Add/import CSV/export, filter. Add-backs and deductions **link to a TB account** and pull its adjusted closing balance |
+| **Audit Adjustments** | Post debit/credit adjustments against TB accounts; the net per account shows on the Trial Balance and flows into any linked computation line. Balances check (Dr = Cr) |
 | **Current Tax** | Editable computation: net profit before tax → add-backs → deductions & capital allowances → adjusted profit → losses & exemption → chargeable income → tax → **current tax payable**. Every add-back/deduction is tagged **permanent** or **temporary** |
 | **Deferred Tax** | Temporary differences (carrying amount − tax base) × rate. Positive difference = liability, negative = asset. Opening and closing balances give the movement charged/credited to P&L |
 | **Tax Reconciliation** | Reconciles tax at the statutory rate to total income-tax expense; temporary differences net to nil and drop out, permanent items, exemption, rebate, FTC and prior-year adjustments remain |
