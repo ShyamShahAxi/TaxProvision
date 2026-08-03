@@ -174,6 +174,16 @@ function currentTaxPayableTB(which) {
   return -net; // TB net asset (debit +) → negative payable
 }
 function hasCurrentTaxTB() { const tm = tbMap(); return currentTaxAccounts().some(c => tm[c]); }
+/* Reconciliation of the current-tax journal:
+   balance per TB + stat-adjustment journals − expected closing = journal to post. */
+function currentTaxReconciliation(P) {
+  const tm = tbMap(), am = auditMap();
+  const codes = currentTaxAccounts();
+  const tbRaw = -codes.reduce((s, c) => { const r = tm[c]; return r ? s + num(r.closing) : s; }, 0);  // payable, per TB (pre-stat)
+  const statAdj = -codes.reduce((s, c) => s + (am[c] || 0), 0);                                        // stat adjustment effect (payable)
+  const expected = P.currentTax + num(provision.priorYearProvisionCarried || 0) + P.priorAdj;          // expected closing payable
+  return { tbRaw, statAdj, expected, journal: tbRaw + statAdj - expected };
+}
 
 /* Profit before tax per the trial balance (adjusted closing balances of P&L
    accounts 4/5/6/7). Income carries a credit closing and expenses/tax a debit,
@@ -833,10 +843,11 @@ function renderMovement(P) {
           <td class="num"><input class="amt" type="number" step="0.01" data-scalar="priorYearProvisionCarried" value="${provision.priorYearProvisionCarried}"></td></tr>
       <tr><td class="label">(Over)/under provision — prior years</td>
           <td class="num"><input class="amt" type="number" step="0.01" data-scalar="priorYearAdjustment" value="${provision.priorYearAdjustment}"></td></tr>
-      <tr class="grand"><td class="label">Expected closing current tax payable / (receivable)</td><td class="num" title="${exact(expected)}">${acc(expected)}</td></tr>
+      <tr class="grand"><td class="label">Current tax payable / (receivable) — per financial statements</td><td class="num" title="${exact(expected)}">${acc(expected)}</td></tr>
+      <tr class="section"><td colspan="2">Reconciliation to the ledger</td></tr>
       <tr><td class="label">FX revaluation (per stat adjustment)</td><td class="num" title="${exact(fxReval)}">${acc(fxReval)}</td></tr>
       <tr class="subtotal"><td class="label">Closing per trial balance <span class="src-tag">TB</span></td><td class="num" title="${exact(tbClose)}">${acc(tbClose)}</td></tr>
-      <tr><td class="label"><span class="hint-text">Positive = payable, negative = net receivable. UFX (FX revaluation) journals form part of the transfer-pricing stat adjustment, shown here as the reconciling line to the TB.</span></td><td></td></tr>`;
+      <tr><td class="label"><span class="hint-text">The financial-statements figure is the expected closing. Positive = payable, negative = net receivable. The FX revaluation (UFX journals) belongs to the transfer-pricing stat adjustment and reconciles the FS figure to the ledger.</span></td><td></td></tr>`;
   } else {
     $('#move-current').innerHTML = `
       <tr><td class="label">Opening current tax payable</td>
@@ -895,9 +906,24 @@ function buildJournals(P) {
 }
 
 function renderJournals(P) {
+  let recCard = '';
+  if (hasCurrentTaxTB()) {
+    const rc = currentTaxReconciliation(P);
+    recCard = `<div class="card">
+      <h3 style="margin:0 0 2px">Current tax — reconciliation to journal</h3>
+      <div class="note-sub" style="color:var(--muted);font-size:0.82rem;margin-bottom:10px">Balance per TB + stat-adjustment journals − expected closing = journal to post (positive = payable)</div>
+      <div class="table-wrap"><table class="comp-table"><tbody>
+        <tr><td class="label">Balance per trial balance (current tax accounts)</td><td class="num" title="${exact(rc.tbRaw)}">${acc(rc.tbRaw)}</td></tr>
+        <tr><td class="label">Add: stat adjustment journals</td><td class="num" title="${exact(rc.statAdj)}">${acc(rc.statAdj)}</td></tr>
+        <tr><td class="label">Less: expected closing current tax payable</td><td class="num" title="${exact(rc.expected)}">${acc(rc.expected)}</td></tr>
+        <tr class="grand"><td class="label">Journal to post (TB + stat − expected)</td><td class="num" title="${exact(rc.journal)}">${acc(rc.journal)}</td></tr>
+      </tbody></table></div>
+      <p class="legend">This reconciling journal (largely the FX revaluation) brings the ledger balances plus stat adjustments to the expected closing tax provision.</p>
+    </div>`;
+  }
   const js = buildJournals(P);
-  if (!js.length) { $('#journals-wrap').innerHTML = `<div class="card"><p class="legend" style="margin:0">Nothing to post yet — enter the computation figures first.</p></div>`; return; }
-  $('#journals-wrap').innerHTML = js.map(j => {
+  if (!js.length) { $('#journals-wrap').innerHTML = recCard || `<div class="card"><p class="legend" style="margin:0">Nothing to post yet — enter the computation figures first.</p></div>`; return; }
+  $('#journals-wrap').innerHTML = recCard + js.map(j => {
     const totDr = j.lines.reduce((t, l) => t + l.dr, 0);
     const totCr = j.lines.reduce((t, l) => t + l.cr, 0);
     return `<div class="card">
