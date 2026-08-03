@@ -113,11 +113,14 @@ function tbMap() {
   provision.tb.forEach(a => { if (a.code) m[String(a.code)] = a; });
   return m;
 }
-/* Net audit adjustment (debit − credit) per account code. */
+/* Net audit adjustment (debit − credit) per account code. Stat rows for other
+   entities are excluded — only the configured entity (and manual rows) count. */
 function auditMap() {
   const m = {};
+  const ent = (settings.entity || '').trim().toLowerCase();
   provision.auditAdjustments.forEach(e => {
     if (!e.account) return;
+    if (e.source === 'stat' && e.entity && e.entity.trim().toLowerCase() !== ent) return;
     m[String(e.account)] = (m[String(e.account)] || 0) + num(e.debit) - num(e.credit);
   });
   return m;
@@ -142,6 +145,24 @@ function remunerationTotal() {
 }
 function medicalCap() { return remunerationTotal() * (num(settings.capRate) / 100); }
 function medicalAddback() { return Math.max(0, medicalExpensesTotal() - medicalCap()); }
+
+/* Profit before tax per the trial balance (adjusted closing balances of P&L
+   accounts 4/5/6/7). Income carries a credit closing and expenses/tax a debit,
+   so profit after tax = −Σ(P&L) and PBT = PAT + tax expense. Includes audit /
+   stat adjustments via adjustedClosing. */
+function tbProfitBeforeTax() {
+  const am = auditMap();
+  let plAll = 0, taxExp = 0;
+  provision.tb.forEach(a => {
+    const c = String(a.code);
+    if (!/^[4567]/.test(c)) return;
+    const bal = num(a.closing) + (am[c] || 0);
+    plAll += bal; if (/^7/.test(c)) taxExp += bal;
+  });
+  return -plAll + taxExp;
+}
+/* Is net-profit-before-tax linked to the TB? (Only when a TB with P&L exists.) */
+function pbtIsLinked() { return provision.pbtLinked !== false && provision.tb.some(a => /^[4567]/.test(String(a.code))); }
 
 /* Computed link sources for add-backs/deductions (account values starting @). */
 function computedSources() {
@@ -201,7 +222,7 @@ function recompute() {
   const addTotal = addPermTotal + addTempTotal;
   const dedTotal = dedPermTotal + dedTempTotal;
 
-  const pbt = num(p.profitBeforeTax);
+  const pbt = pbtIsLinked() ? tbProfitBeforeTax() : num(p.profitBeforeTax);
   const adjusted = pbt + addTotal - dedTotal;
 
   const lossesBF = num(p.lossesBroughtForward);
@@ -364,7 +385,7 @@ function renderTB() {
     }).join('');
   }
   const t = k => sum(provision.tb, k);
-  const adjTot = provision.auditAdjustments.reduce((s, e) => s + num(e.debit) - num(e.credit), 0);
+  const adjTot = Object.values(am).reduce((s, v) => s + v, 0);
   const closeTot = t('closing');
   $('#tb-foot').innerHTML = `<tr>
     <td colspan="2">Total (${provision.tb.length} accounts${q ? `, ${rows.length} shown` : ''})</td>
@@ -403,10 +424,16 @@ function renderAudit() {
   const body = $('#audit-body');
   const tm = tbMap();
   const nameFor = code => { const a = tm[String(code)]; return a ? a.name : ''; };
+  const ent = (settings.entity || '').trim().toLowerCase();
+  const isVisible = e => !(e.source === 'stat' && e.entity && e.entity.trim().toLowerCase() !== ent);
+  const vis = provision.auditAdjustments.map((e, i) => ({ e, i })).filter(({ e }) => isVisible(e));
+  const hidden = provision.auditAdjustments.length - vis.length;
   if (!provision.auditAdjustments.length) {
     body.innerHTML = `<tr class="empty-row"><td colspan="5">No audit adjustments. Add one to post a debit/credit against a trial-balance account.</td></tr>`;
+  } else if (!vis.length) {
+    body.innerHTML = `<tr class="empty-row"><td colspan="5">No adjustments for entity “${esc(settings.entity)}”. ${hidden} row(s) for other entities are hidden.</td></tr>`;
   } else {
-    body.innerHTML = provision.auditAdjustments.map((e, i) => {
+    body.innerHTML = vis.map(({ e, i }) => {
       // Imported stat adjustments are read-only (managed by re-import); only
       // manually-added rows are editable.
       if (e.source === 'stat') {
@@ -427,12 +454,13 @@ function renderAudit() {
       </tr>`;
     }).join('');
   }
-  const dr = sum(provision.auditAdjustments, 'debit'), cr = sum(provision.auditAdjustments, 'credit');
-  $('#audit-foot').innerHTML = `<tr><td colspan="2">Total</td><td class="num">${fmt(dr)}</td><td class="num">${fmt(cr)}</td><td></td></tr>`;
+  const dr = vis.reduce((s, { e }) => s + num(e.debit), 0), cr = vis.reduce((s, { e }) => s + num(e.credit), 0);
+  $('#audit-foot').innerHTML = `<tr><td colspan="2">Total (${vis.length}${hidden ? `, ${hidden} hidden` : ''})</td><td class="num">${fmt(dr)}</td><td class="num">${fmt(cr)}</td><td></td></tr>`;
   const diff = dr - cr;
-  $('#audit-note').innerHTML = Math.abs(diff) < 0.005
-    ? 'Audit adjustments balance (debits = credits). Net effect flows to the Trial Balance and any linked computation line.'
-    : `Debits − credits = ${acc(diff)}. Audit journals should balance to nil before posting.`;
+  $('#audit-note').innerHTML =
+    (Math.abs(diff) < 0.005 ? 'Audit adjustments balance (debits = credits).' : `Debits − credits = ${acc(diff)}. Audit journals should balance to nil before posting.`) +
+    (hidden ? ` &nbsp;Showing only entity <strong>${esc(settings.entity)}</strong>; ${hidden} row(s) for other entities are hidden.` : '') +
+    ' Net effect flows to the Trial Balance and any linked computation line.';
 }
 
 function tbOptions(selected) {
@@ -529,9 +557,12 @@ function renderCurrent(P) {
   const body = $('#current-body');
   body.innerHTML = `
     <tr class="section"><td colspan="4">Chargeable income</td></tr>
-    <tr><td class="label">Net profit / (loss) before tax</td>
-        <td class="num"><input class="amt" type="number" step="0.01" data-scalar="profitBeforeTax" value="${provision.profitBeforeTax}"></td>
-        <td colspan="2"></td></tr>
+    <tr><td class="label">Net profit / (loss) before tax${pbtIsLinked() ? ' <span class="src-tag">TB</span>' : ''}</td>
+        <td class="num">${pbtIsLinked()
+          ? `<span id="c-pbt" title="${exact(P.pbt)}">${acc(P.pbt)}</span>`
+          : `<input class="amt" type="number" step="0.01" data-scalar="profitBeforeTax" value="${provision.profitBeforeTax}">`}</td>
+        <td colspan="2">${provision.tb.some(a => /^[4567]/.test(String(a.code)))
+          ? `<button class="link" data-act="toggle-pbt">${pbtIsLinked() ? 'unlink from TB' : 'link to TB'}</button>` : ''}</td></tr>
 
     <tr class="section"><td colspan="4">Add: non-deductible / non-taxable book items</td></tr>
     ${lineRows(provision.addBacks, 'addBacks')}
@@ -909,23 +940,25 @@ function importStatCsv(rows) {
   const iEnt = col['Entity'], iAcc = col['Account no'], iDesc = col['Description'];
   const iNet = col['Net (USD)'], iDr = col['DR (Txn)'], iCr = col['CR (Txn)'];
   const entity = (settings.entity || '').trim();
-  if (!entity) { toast('Set the entity code in Data & Settings first'); return; }
   const added = [];
   for (let i = h + 1; i < rows.length; i++) {
     const r = rows[i];
-    if (String(r[iEnt] || '').trim().toLowerCase() !== entity.toLowerCase()) continue;
+    const ent = String(r[iEnt] || '').trim();
+    if (!ent) continue;
     const code = String(r[iAcc] || '').trim();
     if (!code || !/\d/.test(code)) continue;
     let net = iNet != null ? cleanNum(r[iNet]) : 0;
     if (!net && iDr != null && iCr != null) net = cleanNum(r[iDr]) - cleanNum(r[iCr]);
     if (Math.abs(net) < 0.005) continue;
-    added.push({ id: uid(), account: code, description: String(r[iDesc] || 'Stat adjustment').trim(), debit: net > 0 ? round2(net) : 0, credit: net < 0 ? round2(-net) : 0, source: 'stat' });
+    added.push({ id: uid(), account: code, description: String(r[iDesc] || 'Stat adjustment').trim(), debit: net > 0 ? round2(net) : 0, credit: net < 0 ? round2(-net) : 0, source: 'stat', entity: ent });
   }
-  if (!added.length) { toast(`No rows for entity “${entity}” found`); return; }
+  if (!added.length) { toast('No adjustment rows found in the file'); return; }
+  // Keep the whole file but only the configured entity is shown/used.
   provision.auditAdjustments = provision.auditAdjustments.filter(e => e.source !== 'stat').concat(added);
   saveProvision(); renderAll();
-  const dr = added.reduce((s, e) => s + e.debit, 0), cr = added.reduce((s, e) => s + e.credit, 0);
-  toast(`${added.length} stat adjustments imported for ${entity}` + (Math.abs(dr - cr) < 0.5 ? '' : ' (⚠ Dr≠Cr)'));
+  const mine = added.filter(e => e.entity.toLowerCase() === entity.toLowerCase()).length;
+  const others = added.length - mine;
+  toast(`${mine} adjustments for ${entity}` + (others ? ` · ${others} other-entity rows hidden` : ''));
 }
 
 /* Attach an insurance-premium breakdown. Each row: a policy label, a type cell
@@ -952,8 +985,8 @@ function importPremiumsCsv(rows) {
 
 function exportAuditCsv() {
   const tm = tbMap();
-  const rows = [['Account', 'Account name', 'Description', 'Debit', 'Credit']];
-  provision.auditAdjustments.forEach(e => { const a = tm[String(e.account)]; rows.push([e.account, a ? a.name : '', e.description, round2(e.debit), round2(e.credit)]); });
+  const rows = [['Entity', 'Account', 'Account name', 'Description', 'Debit', 'Credit']];
+  provision.auditAdjustments.forEach(e => { const a = tm[String(e.account)]; rows.push([e.entity || settings.entity, e.account, a ? a.name : '', e.description, round2(e.debit), round2(e.credit)]); });
   download(`audit-adjustments-ya${settings.ya}.csv`, toCsv(rows), 'text/csv');
 }
 
@@ -1035,7 +1068,11 @@ function onClick(e) {
   const btn = e.target.closest('[data-act]');
   if (!btn) return;
   const act = btn.dataset.act;
-  if (act === 'add-line') {
+  if (act === 'toggle-pbt') {
+    if (pbtIsLinked()) { provision.profitBeforeTax = round2(tbProfitBeforeTax()); provision.pbtLinked = false; }
+    else { provision.pbtLinked = true; }
+    saveProvision(); render();
+  } else if (act === 'add-line') {
     const which = btn.dataset.line;
     provision[which].push({ id: uid(), label: '', amount: 0, type: 'permanent', source: 'manual' });
     saveProvision(); render();
