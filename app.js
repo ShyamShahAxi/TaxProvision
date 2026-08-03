@@ -210,11 +210,16 @@ function computedSources() {
    carrying amount is a taxable difference (DTL, positive); a provision's credit
    balance is a deductible difference (DTA, negative). Otherwise use stored values. */
 function defTD(x, which) {
-  if (Array.isArray(x.tdAccounts) && x.tdAccounts.length) return x.tdAccounts.reduce((s, c) => s + leaseAmt(c, which), 0);
+  if (Array.isArray(x.tdAccounts) && x.tdAccounts.length) {
+    // Optional opening override (e.g. a prior-year correction) — closing always from TB.
+    if (which === 'opening' && x.openingTD != null && x.openingTD !== '') return num(x.openingTD);
+    return x.tdAccounts.reduce((s, c) => s + leaseAmt(c, which), 0);
+  }
   if (x.source === 'ifrs16') return leaseTD(which);
   return num(which === 'opening' ? x.openingTD : x.closingTD);
 }
 function defLinked(x) { return (Array.isArray(x.tdAccounts) && x.tdAccounts.length) || x.source === 'ifrs16'; }
+function defOpeningOverridden(x) { return Array.isArray(x.tdAccounts) && x.tdAccounts.length && x.openingTD != null && x.openingTD !== ''; }
 
 /* Effective amount of an add-back/deduction. The `account` field selects a
    source: a computed value (@…), a specific TB column (CODE#opening|debit|credit),
@@ -722,9 +727,10 @@ function renderDeferred(P) {
       const op = defTD(x, 'opening'), cl = defTD(x, 'closing');
       if (defLinked(x)) {
         // TB-linked → read-only, formatted, no delete.
+        const opAdj = defOpeningOverridden(x);
         return `<tr data-line="deferredItems" data-idx="${i}">
           <td>${esc(x.label)} <span class="src-tag">TB</span></td>
-          <td class="num" title="${exact(op)}">${acc(op)}</td>
+          <td class="num" title="${opAdj ? 'FY26 opening corrected to signed financials (prior-year WIP)' : exact(op)}">${acc(op)}${opAdj ? ' <span class="src-tag" style="background:var(--amber-bg);color:var(--amber)">adj</span>' : ''}</td>
           <td class="num" title="${exact(cl)}">${acc(cl)}</td>
           <td class="num">${acc(cl - op)}</td>
           <td class="num">${acc(cl * r)}</td>
@@ -748,8 +754,9 @@ function renderDeferred(P) {
     <td class="num">${acc(P.closingTD - P.openingTD)}</td>
     <td class="num">${acc(P.closingDT)}</td><td></td></tr>`;
   $('#deferred-note').innerHTML =
-    `Opening deferred tax ${fmt(Math.abs(P.openingDT))} → closing ${fmt(Math.abs(P.closingDT))} at ${pct(settings.taxRate)}. ` +
-    `Movement of ${acc(P.deferredCharge)} is ${P.deferredCharge >= 0 ? 'charged to' : 'credited to'} profit or loss.`;
+    `Opening deferred tax ${fmt(Math.abs(P.openingDT))} ${P.openingDT >= 0 ? 'liability' : 'asset'} → closing ${fmt(Math.abs(P.closingDT))} ${P.closingDT >= 0 ? 'liability' : 'asset'} at ${pct(settings.taxRate)}. ` +
+    `Movement of ${acc(P.deferredCharge)} is ${P.deferredCharge >= 0 ? 'charged to' : 'credited to'} profit or loss.` +
+    (provision.deferredItems.some(defOpeningOverridden) ? ` &nbsp;The FY26 opening includes a prior-year correction — WIP previously treated as a deferred tax asset has reclassified to software development — giving a net opening DTL of ${fmt(Math.abs(P.openingDT))} per the signed accounts.` : '');
 }
 
 /* ----- Reconciliation ----- */
@@ -1368,7 +1375,7 @@ function restoreSampleLines() {
   if (!provision.tb.length && s.tb.length) provision.tb = s.tb;
   saveProvision();
 }
-const HEAL_KEY = 'taxprov.heal.v3';
+const HEAL_KEY = 'taxprov.heal.v4';
 if (localStorage.getItem(INIT_KEY) && !localStorage.getItem(HEAL_KEY)) {
   restoreSampleLines();  // existing sessions: top up standard lines lost to earlier ✕ deletes
 }
