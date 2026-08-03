@@ -23,7 +23,9 @@ function sampleProvision() {
   const L = (label, amount, type, source, account) => ({ id: uid(), label, amount, type: type || 'permanent', source: source || 'manual', account: account || '' });
   const D = (label, openingTD, closingTD, source) => ({ id: uid(), label, openingTD, closingTD, source: source || 'manual' });
   // Deferred temporary difference linked to TB accounts (opening + closing).
-  const DT = (label, accounts) => ({ id: uid(), label, tdAccounts: accounts, source: 'tb' });
+  // openingOverride corrects the FY26 opening where the prior-year signed
+  // accounts differ from the TB opening (e.g. WIP reclassification).
+  const DT = (label, accounts, openingOverride) => ({ id: uid(), label, tdAccounts: accounts, source: 'tb', openingTD: openingOverride == null ? '' : openingOverride });
   const P = (policy, type, amount) => ({ id: uid(), policy, type, amount });
   return {
     profitBeforeTax: 317389,
@@ -80,7 +82,10 @@ function sampleProvision() {
       DT('Leave provision', ['270300']),
       DT('Accrued commissions', ['250200']),
       DT('Computer equipment — accelerated capital allowances', ['140100', '140110']),
-      DT('Development costs (software) — accelerated capital allowances', ['150100', '150110']),
+      // FY26 opening corrected to the signed accounts: last year the WIP (150120)
+      // balance was included (wrongly claimed as a DTA); opening = 150100+150110+
+      // 150120 opening = 2,132,217, giving a net opening DTL of 344,379.
+      DT('Development costs (software) — accelerated capital allowances', ['150100', '150110'], 2132217.08),
       DT('FRS 116 leases (ROU vs lease liability)', ['140300', '140310', '140340', '250900']),
     ],
 
