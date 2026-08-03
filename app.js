@@ -33,7 +33,7 @@ const defaultSettings = {
   // GL accounts for the provision journals (editable — defaults match the AUS155 workpaper where known)
   glTaxExpense: '700100',       // Income tax expense — current (P&L)
   glDeferredExpense: '700200',  // Deferred tax expense (P&L)
-  glTaxPayable: '250650',       // Current tax / provision for tax (balance sheet)
+  glTaxPayable: '260100',       // Provision for income tax (balance sheet)
   glDeferredBalance: '240100',  // Deferred tax liability / (asset) (balance sheet)
   glBank: '100100',             // Bank / cash (for tax paid)
 };
@@ -908,17 +908,28 @@ function buildJournals(P) {
 function renderJournals(P) {
   let recCard = '';
   if (hasCurrentTaxTB()) {
-    const rc = currentTaxReconciliation(P);
+    const tm = tbMap(), am = auditMap();
+    const codes = currentTaxAccounts();
+    let totTB = 0, totStat = 0;
+    const rows = codes.map(c => { const r = tm[c]; const tb = r ? num(r.closing) : 0, st = am[c] || 0; totTB += tb; totStat += st; return { c, name: r ? r.name : '—', tb, st }; });
+    const totAfter = totTB + totStat;                       // net balance per ledger (debit +), after stat
+    const expectedPayable = P.currentTax + num(provision.priorYearProvisionCarried || 0) + P.priorAdj;
+    const expectedBalance = -expectedPayable;               // expected as a TB balance (payable = credit = negative)
+    const journal = totAfter - expectedBalance;             // reconciling movement (mostly FX revaluation)
     recCard = `<div class="card">
       <h3 style="margin:0 0 2px">Current tax — reconciliation to journal</h3>
-      <div class="note-sub" style="color:var(--muted);font-size:0.82rem;margin-bottom:10px">Balance per TB + stat-adjustment journals − expected closing = journal to post (positive = payable)</div>
-      <div class="table-wrap"><table class="comp-table"><tbody>
-        <tr><td class="label">Balance per trial balance (current tax accounts)</td><td class="num" title="${exact(rc.tbRaw)}">${acc(rc.tbRaw)}</td></tr>
-        <tr><td class="label">Add: stat adjustment journals</td><td class="num" title="${exact(rc.statAdj)}">${acc(rc.statAdj)}</td></tr>
-        <tr><td class="label">Less: expected closing current tax payable</td><td class="num" title="${exact(rc.expected)}">${acc(rc.expected)}</td></tr>
-        <tr class="grand"><td class="label">Journal to post (TB + stat − expected)</td><td class="num" title="${exact(rc.journal)}">${acc(rc.journal)}</td></tr>
+      <div class="note-sub" style="color:var(--muted);font-size:0.82rem;margin-bottom:10px">Balances per TB + stat-adjustment journals, by account, versus the expected closing. Shown in ledger sign — a credit (payable) is in parentheses.</div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Account</th><th>Name</th><th class="num">Per TB</th><th class="num">Stat adj</th><th class="num">After stat</th></tr></thead>
+        <tbody>${rows.map(x => `<tr><td class="tb-code">${esc(x.c)}</td><td>${esc(x.name)}</td><td class="num" title="${exact(x.tb)}">${acc(x.tb)}</td><td class="num" title="${exact(x.st)}">${acc(x.st)}</td><td class="num" title="${exact(x.tb + x.st)}">${acc(x.tb + x.st)}</td></tr>`).join('')}</tbody>
+        <tfoot><tr><td colspan="2">Total</td><td class="num">${acc(totTB)}</td><td class="num">${acc(totStat)}</td><td class="num">${acc(totAfter)}</td></tr></tfoot>
+      </table></div>
+      <div class="table-wrap" style="margin-top:12px"><table class="comp-table"><tbody>
+        <tr><td class="label">Balance per TB after stat adjustments (net)</td><td class="num" title="${exact(totAfter)}">${acc(totAfter)}</td></tr>
+        <tr><td class="label">Less: expected closing current tax provision</td><td class="num" title="${exact(expectedBalance)}">${acc(expectedBalance)}</td></tr>
+        <tr class="grand"><td class="label">Reconciling journal (FX revaluation → reval)</td><td class="num" title="${exact(journal)}">${acc(journal)}</td></tr>
       </tbody></table></div>
-      <p class="legend">This reconciling journal (largely the FX revaluation) brings the ledger balances plus stat adjustments to the expected closing tax provision.</p>
+      <p class="legend">The reconciling journal is essentially the FX revaluation, which posts to the reval account (part of the stat adjustment). To split it precisely by account I'd need the expected closing per account (from your D. Proof) — say the word and I'll add those inputs.</p>
     </div>`;
   }
   const js = buildJournals(P);
@@ -1459,6 +1470,7 @@ function restoreSampleLines() {
   if (provision.priorYearProvisionCarried == null) provision.priorYearProvisionCarried = s.priorYearProvisionCarried || 0;
   saveProvision();
 }
+if (settings.glTaxPayable === '250650') { settings.glTaxPayable = '260100'; saveSettings(); } // fix old placeholder code
 const HEAL_KEY = 'taxprov.heal.v5';
 if (localStorage.getItem(INIT_KEY) && !localStorage.getItem(HEAL_KEY)) {
   restoreSampleLines();  // existing sessions: top up standard lines lost to earlier ✕ deletes
