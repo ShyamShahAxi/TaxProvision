@@ -447,12 +447,23 @@ function renderMedical() {
   if (!provision.insurancePremiums.length) {
     body.innerHTML = `<tr class="empty-row"><td colspan="4">No premiums attached. Use “Attach insurance premiums” to import the breakdown, or add rows.</td></tr>`;
   } else {
-    body.innerHTML = provision.insurancePremiums.map((p, i) => `<tr data-line="insurancePremiums" data-idx="${i}">
-      <td><input class="desc-in" data-key="policy" value="${attr(p.policy)}" placeholder="Policy"></td>
-      <td><select class="type-sel" data-key="type"><option${p.type === 'Life' ? ' selected' : ''}>Life</option><option${p.type === 'Medical' ? ' selected' : ''}>Medical</option></select></td>
-      <td class="num"><input class="amt" type="number" step="0.01" data-key="amount" value="${p.amount}"></td>
-      <td class="act"><button class="ghost sm" data-act="del-line" title="Remove">&times;</button></td>
-    </tr>`).join('');
+    body.innerHTML = provision.insurancePremiums.map((p, i) => {
+      // Attached/seeded premiums are read-only; only manually-added rows edit.
+      if (p.source === 'manual') {
+        return `<tr data-line="insurancePremiums" data-idx="${i}">
+          <td><input class="desc-in" data-key="policy" value="${attr(p.policy)}" placeholder="Policy"></td>
+          <td><select class="type-sel" data-key="type"><option${p.type === 'Life' ? ' selected' : ''}>Life</option><option${p.type === 'Medical' ? ' selected' : ''}>Medical</option></select></td>
+          <td class="num"><input class="amt" type="number" step="0.01" data-key="amount" value="${p.amount}"></td>
+          <td class="act"><button class="ghost sm" data-act="del-line" title="Remove">&times;</button></td>
+        </tr>`;
+      }
+      return `<tr data-line="insurancePremiums" data-idx="${i}">
+        <td>${esc(p.policy)}</td>
+        <td><span class="pill ${p.type === 'Life' ? 'blue' : 'grey'}">${esc(p.type)}</span></td>
+        <td class="num" title="${exact(p.amount)}">${fmt(p.amount)}</td>
+        <td class="act"><button class="ghost sm" data-act="del-line" title="Remove">&times;</button></td>
+      </tr>`;
+    }).join('');
   }
   const life = lifeInsuranceTotal(), med = medicalInsuranceTotal();
   $('#prem-foot').innerHTML = `<tr><td>Total (${provision.insurancePremiums.length})</td>
@@ -1086,7 +1097,7 @@ function wire() {
 
   // Medical — insurance premiums
   $('#btn-add-prem').addEventListener('click', () => {
-    provision.insurancePremiums.push({ id: uid(), policy: '', type: 'Medical', amount: 0 });
+    provision.insurancePremiums.push({ id: uid(), policy: '', type: 'Medical', amount: 0, source: 'manual' });
     saveProvision(); render();
   });
   $('#btn-attach-prem').addEventListener('click', () => $('#prem-file').click());
@@ -1171,7 +1182,10 @@ function readJson(e, cb) {
 /* ---------- Boot ----------
    On the very first visit (nothing saved yet) seed the AUS155 sample so the
    app opens with data instead of a blank statement. The init marker means an
-   explicit "Clear all data" stays cleared and we never overwrite real work. */
+   explicit "Clear all data" stays cleared and we never overwrite real work.
+   DO NOT bump INIT_KEY to push sample changes — that re-seeds on next load and
+   wipes the user's imported data (stat adjustments, premiums, edits). Sample
+   updates are picked up only via an explicit "Load sample provision". */
 const INIT_KEY = 'taxprov.init.v5';
 if (!localStorage.getItem(INIT_KEY)) {
   loadSample();
