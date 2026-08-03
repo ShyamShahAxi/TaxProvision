@@ -183,6 +183,19 @@ input.plain:hover { border-color: var(--line); background: #fff; }
 .legend { font-size: 0.8rem; color: var(--muted); margin-top: 10px; }
 .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
 
+/* Compact, read-friendly trial balance */
+#tb-body td, #tb-foot td, #view-tb thead th { padding: 5px 10px; font-size: 0.8rem; }
+#view-tb table { table-layout: fixed; }
+.tb-code { font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap; }
+.tb-name { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#tb-body td.num, #tb-foot td.num { font-variant-numeric: tabular-nums; }
+#tb-body input.amt { width: 100%; padding: 4px 6px; text-align: right; }
+#tb-body input.desc-in { width: 100%; padding: 4px 6px; }
+.zero { color: #cbd5e1; }
+#view-tb col.c-code { width: 78px; }
+#view-tb col.c-num { width: 104px; }
+#view-tb col.c-act { width: 30px; }
+
 .note-block { margin-bottom: 26px; }
 .note-block h3 { margin: 0 0 4px; font-size: 1rem; }
 .note-block .note-sub { color: var(--muted); font-size: 0.8rem; margin-bottom: 10px; }

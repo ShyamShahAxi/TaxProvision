@@ -260,12 +260,23 @@ function renderDashboard(P) {
     : `<p class="legend">No Fixed Asset Register imported. Go to <strong>Data &amp; Settings → FAR link</strong> to import a FAR backup and pull in depreciation, capital allowances and the deferred-tax temporary difference automatically.</p>`;
 }
 
+/* Plain number for tables: thousands separators, (parentheses) for negatives,
+   muted dash for zero. No currency symbol — keeps the wide TB readable. */
+function money(v) {
+  const n = num(v);
+  if (Math.abs(n) < 0.005) return '<span class="zero">–</span>';
+  const s = Math.abs(n).toLocaleString(undefined, { maximumFractionDigits: 0 });
+  return n < 0 ? `<span class="neg">(${s})</span>` : s;
+}
+
 /* ----- Trial balance ----- */
 let tbFilter = '';
+let tbEdit = false;
 function renderTB() {
   const body = $('#tb-body');
   const am = auditMap();
   const q = tbFilter.trim().toLowerCase();
+  const eb = $('#btn-tb-edit'); if (eb) { eb.textContent = tbEdit ? 'Done' : 'Edit'; eb.classList.toggle('primary', tbEdit); }
   // Keep original indices so edits map back, but display sorted by account number.
   const rows = provision.tb.map((a, i) => ({ a, i }))
     .sort((x, y) => String(x.a.code).localeCompare(String(y.a.code), undefined, { numeric: true }))
@@ -275,20 +286,35 @@ function renderTB() {
     body.innerHTML = `<tr class="empty-row"><td colspan="9">No accounts. Add one, import a CSV, load the sample, or pull from FAR in Data &amp; Settings.</td></tr>`;
   } else if (!rows.length) {
     body.innerHTML = `<tr class="empty-row"><td colspan="9">No accounts match “${esc(tbFilter)}”.</td></tr>`;
-  } else {
+  } else if (tbEdit) {
     body.innerHTML = rows.map(({ a, i }) => {
-      const adj = am[String(a.code)] || 0;
-      const adjusted = num(a.closing) + adj;
+      const adjusted = num(a.closing) + (am[String(a.code)] || 0);
       return `<tr data-line="tb" data-idx="${i}">
-        <td><input class="desc-in" style="min-width:88px" data-key="code" value="${attr(a.code)}"></td>
+        <td><input class="desc-in" data-key="code" value="${attr(a.code)}"></td>
         <td><input class="desc-in" data-key="name" value="${attr(a.name)}"></td>
         <td class="num"><input class="amt" type="number" step="0.01" data-key="opening" value="${a.opening}"></td>
         <td class="num"><input class="amt" type="number" step="0.01" data-key="debit" value="${a.debit}"></td>
         <td class="num"><input class="amt" type="number" step="0.01" data-key="credit" value="${a.credit}"></td>
         <td class="num"><input class="amt" type="number" step="0.01" data-key="closing" value="${a.closing}"></td>
-        <td class="num ${adj ? (adj > 0 ? 'pos' : 'neg') : ''}">${adj ? acc(adj) : '—'}</td>
-        <td class="num">${acc(adjusted)}</td>
+        <td class="num">${money(am[String(a.code)] || 0)}</td>
+        <td class="num">${money(adjusted)}</td>
         <td class="act"><button class="ghost sm" data-act="del-line" title="Remove">&times;</button></td>
+      </tr>`;
+    }).join('');
+  } else {
+    body.innerHTML = rows.map(({ a, i }) => {
+      const adj = am[String(a.code)] || 0;
+      const adjusted = num(a.closing) + adj;
+      return `<tr data-line="tb" data-idx="${i}">
+        <td class="tb-code">${esc(a.code)}</td>
+        <td class="tb-name" title="${attr(a.name)}">${esc(a.name)}</td>
+        <td class="num">${money(a.opening)}</td>
+        <td class="num">${money(a.debit)}</td>
+        <td class="num">${money(a.credit)}</td>
+        <td class="num">${money(a.closing)}</td>
+        <td class="num">${money(adj)}</td>
+        <td class="num">${money(adjusted)}</td>
+        <td class="act"></td>
       </tr>`;
     }).join('');
   }
@@ -297,8 +323,8 @@ function renderTB() {
   const closeTot = t('closing');
   $('#tb-foot').innerHTML = `<tr>
     <td colspan="2">Total (${provision.tb.length} accounts${q ? `, ${rows.length} shown` : ''})</td>
-    <td class="num">${fmt(t('opening'))}</td><td class="num">${fmt(t('debit'))}</td><td class="num">${fmt(t('credit'))}</td>
-    <td class="num">${acc(closeTot)}</td><td class="num">${acc(adjTot)}</td><td class="num">${acc(closeTot + adjTot)}</td><td></td></tr>`;
+    <td class="num">${money(t('opening'))}</td><td class="num">${money(t('debit'))}</td><td class="num">${money(t('credit'))}</td>
+    <td class="num">${money(closeTot)}</td><td class="num">${money(adjTot)}</td><td class="num">${money(closeTot + adjTot)}</td><td></td></tr>`;
   const bal = Math.abs(closeTot + adjTot) < 1;
   $('#tb-note').innerHTML = bal
     ? 'Trial balance is in balance (adjusted closing balances net to nil).'
@@ -838,10 +864,11 @@ function wire() {
 
   // Trial balance
   $('#btn-add-tb').addEventListener('click', () => {
-    provision.tb.push({ id: uid(), code: '', name: '', debit: 0, credit: 0 });
-    saveProvision(); render();
+    provision.tb.push({ id: uid(), code: '', name: '', opening: 0, debit: 0, credit: 0, closing: 0 });
+    tbEdit = true; saveProvision(); render();
   });
   $('#tb-search').addEventListener('input', e => { tbFilter = e.target.value; renderTB(); });
+  $('#btn-tb-edit').addEventListener('click', () => { tbEdit = !tbEdit; renderTB(); });
   $('#btn-import-tb').addEventListener('click', () => $('#tb-file').click());
   $('#tb-file').addEventListener('change', e => {
     const file = e.target.files[0]; if (!file) return;
