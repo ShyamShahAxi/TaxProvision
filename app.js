@@ -10,6 +10,7 @@
 
 const STORE_KEY = 'taxprov.provision.v1';
 const SETTINGS_KEY = 'taxprov.settings.v1';
+const PREMDOC_KEY = 'taxprov.premiumDoc.v1'; // attached insurer invoice (PDF), kept out of the JSON backup
 
 /* ---------- Settings ---------- */
 const defaultSettings = {
@@ -132,6 +133,20 @@ function adjustedClosing(code, tm, am) {
   const adj = (am || auditMap())[String(code)] || 0;
   return base + adj;
 }
+/* ---------- Attached source document (insurer invoice PDF) ---------- */
+function loadPremiumDoc() { try { return JSON.parse(localStorage.getItem(PREMDOC_KEY)); } catch (e) { return null; } }
+function savePremiumDoc(d) { try { localStorage.setItem(PREMDOC_KEY, JSON.stringify(d)); return true; } catch (e) { toast('File too large to store in this browser'); return false; } }
+function openDataUri(dataUri, name) {
+  const comma = dataUri.indexOf(',');
+  const mime = (dataUri.slice(5, comma).split(';')[0]) || 'application/pdf';
+  const bin = atob(dataUri.slice(comma + 1));
+  const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  const url = URL.createObjectURL(new Blob([arr], { type: mime }));
+  window.open(url, '_blank');
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
 /* ---------- Medical expense capping & insurance ---------- */
 function premiumSum(type) { return provision.insurancePremiums.reduce((s, p) => p.type === type ? s + num(p.amount) : s, 0); }
 function lifeInsuranceTotal() { return premiumSum('Life'); }
@@ -499,6 +514,11 @@ function renderMedical() {
   const life = lifeInsuranceTotal(), med = medicalInsuranceTotal();
   $('#prem-foot').innerHTML = `<tr><td>Total (${provision.insurancePremiums.length})</td>
     <td class="num">Life ${fmt(life)}</td><td class="num" title="Medical ${exact(med)}">Medical ${fmt(med)}</td><td></td></tr>`;
+
+  const doc = loadPremiumDoc();
+  $('#prem-doc').innerHTML = doc
+    ? `<span class="pill blue">PDF</span> <strong>${esc(doc.name)}</strong> &middot; <button class="link" data-act="view-pdf">View</button> &middot; <button class="link" data-act="remove-pdf">Remove</button>`
+    : `<span class="hint-text">No source document attached — use “Attach invoice (PDF)”.</span>`;
 
   const sm = staffMedical(), A = medicalExpensesTotal(), rem = remunerationTotal(), B = medicalCap(), add = medicalAddback();
   $('#medical-calc').innerHTML = `<table class="comp-table"><tbody>
@@ -1071,6 +1091,8 @@ function onClick(e) {
   const btn = e.target.closest('[data-act]');
   if (!btn) return;
   const act = btn.dataset.act;
+  if (act === 'view-pdf') { const d = loadPremiumDoc(); if (d) openDataUri(d.dataUri, d.name); return; }
+  if (act === 'remove-pdf') { if (confirm('Remove the attached invoice?')) { localStorage.removeItem(PREMDOC_KEY); renderMedical(); toast('Invoice removed'); } return; }
   if (act === 'toggle-pbt') {
     if (pbtIsLinked()) { provision.profitBeforeTax = round2(tbProfitBeforeTax()); provision.pbtLinked = false; }
     else { provision.pbtLinked = true; }
@@ -1152,6 +1174,14 @@ function wire() {
     if (!confirm('Clear all attached premiums?')) return;
     provision.insurancePremiums = []; saveProvision(); renderAll(); toast('Premiums cleared');
   });
+  $('#btn-attach-pdf').addEventListener('click', () => $('#pdf-file').click());
+  $('#pdf-file').addEventListener('change', e => {
+    const file = e.target.files[0]; if (!file) return;
+    if (file.size > 5 * 1024 * 1024) { toast('PDF too large (max ~5 MB) for browser storage'); e.target.value = ''; return; }
+    const reader = new FileReader();
+    reader.onload = () => { if (savePremiumDoc({ name: file.name, dataUri: reader.result })) { renderMedical(); toast('Invoice attached'); } e.target.value = ''; };
+    reader.readAsDataURL(file);
+  });
 
   // Pull FAR data from the same browser (shared origin on the live site)
   $('#btn-far-browser').addEventListener('click', importFarFromBrowser);
@@ -1205,7 +1235,7 @@ function wire() {
   });
   $('#btn-clear').addEventListener('click', () => {
     if (!confirm('Clear all provision data from this browser?')) return;
-    localStorage.removeItem(STORE_KEY); localStorage.removeItem(SETTINGS_KEY);
+    localStorage.removeItem(STORE_KEY); localStorage.removeItem(SETTINGS_KEY); localStorage.removeItem(PREMDOC_KEY);
     localStorage.setItem(INIT_KEY, '1'); // stay cleared; don't re-seed the sample on reload
     settings = Object.assign({}, defaultSettings); provision = emptyProvision();
     renderAll(); toast('Cleared');
