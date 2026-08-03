@@ -28,6 +28,7 @@ const defaultSettings = {
   capRate: 1,
   medicalCode: '600550',   // staff medical GL account
   remunCodes: '600100,600110,600140,600150,510100,600180,600210,600305,600310',
+  currentTaxCodes: '130100,130200,260100,260200', // TB accounts for the net current tax payable/(receivable)
   sgdRate: 1.2854,         // S$ per US$ — converts the SGD tax-exemption thresholds to USD
   // GL accounts for the provision journals (editable — defaults match the AUS155 workpaper where known)
   glTaxExpense: '700100',       // Income tax expense — current (P&L)
@@ -161,6 +162,17 @@ function remunerationTotal() {
 }
 function medicalCap() { return remunerationTotal() * (num(settings.capRate) / 100); }
 function medicalAddback() { return Math.max(0, medicalExpensesTotal() - medicalCap()); }
+
+/* Net current tax payable/(receivable) per the TB current-tax accounts.
+   Returned as a payable (liability positive): a net debit balance in the TB
+   (a receivable) is therefore negative. */
+function currentTaxAccounts() { return (settings.currentTaxCodes || '').split(',').map(s => s.trim()).filter(Boolean); }
+function currentTaxPayableTB(which) {
+  const tm = tbMap(), am = auditMap();
+  const net = currentTaxAccounts().reduce((s, c) => { const rr = tm[c]; if (!rr) return s; return s + (which === 'opening' ? num(rr.opening) : num(rr.closing) + (am[c] || 0)); }, 0);
+  return -net; // TB net asset (debit +) → negative payable
+}
+function hasCurrentTaxTB() { const tm = tbMap(); return currentTaxAccounts().some(c => tm[c]); }
 
 /* Profit before tax per the trial balance (adjusted closing balances of P&L
    accounts 4/5/6/7). Income carries a credit closing and expenses/tax a debit,
@@ -805,15 +817,31 @@ function renderRecon(P) {
 
 /* ----- Provision movement ----- */
 function renderMovement(P) {
-  $('#move-current').innerHTML = `
-    <tr><td class="label">Opening current tax payable</td>
-        <td class="num"><input class="amt" type="number" step="0.01" data-scalar="openingCurrentTaxPayable" value="${provision.openingCurrentTaxPayable}"></td></tr>
-    <tr><td class="label">Current year tax charge</td><td class="num">${acc(P.currentTax)}</td></tr>
-    <tr><td class="label">(Over)/under provision — prior years</td>
-        <td class="num"><input class="amt" type="number" step="0.01" data-scalar="priorYearAdjustment" value="${provision.priorYearAdjustment}"></td></tr>
-    <tr><td class="label">Tax paid during the year</td>
-        <td class="num"><input class="amt" type="number" step="0.01" data-scalar="taxPaid" value="${provision.taxPaid}"></td></tr>
-    <tr class="grand"><td class="label">Closing current tax payable</td><td class="num">${acc(P.closingPayable)}</td></tr>`;
+  if (hasCurrentTaxTB()) {
+    // Opening & closing tie to the TB current-tax accounts; payments/refunds/FX
+    // reconcile the roll-forward (FX revaluation sits in the stat adjustment).
+    const openPay = currentTaxPayableTB('opening');
+    const closePay = currentTaxPayableTB('closing');
+    const paidFx = closePay - openPay - P.currentTax - P.priorAdj; // balancing (net cash + FX)
+    $('#move-current').innerHTML = `
+      <tr><td class="label">Opening current tax payable / (receivable) <span class="src-tag">TB</span></td><td class="num" title="${exact(openPay)}">${acc(openPay)}</td></tr>
+      <tr><td class="label">Current year tax charge</td><td class="num">${acc(P.currentTax)}</td></tr>
+      <tr><td class="label">(Over)/under provision — prior years</td>
+          <td class="num"><input class="amt" type="number" step="0.01" data-scalar="priorYearAdjustment" value="${provision.priorYearAdjustment}"></td></tr>
+      <tr><td class="label">Tax paid, refunds &amp; FX revaluation</td><td class="num" title="${exact(paidFx)}">${acc(paidFx)}</td></tr>
+      <tr class="grand"><td class="label">Closing current tax payable / (receivable) <span class="src-tag">TB</span></td><td class="num" title="${exact(closePay)}">${acc(closePay)}</td></tr>
+      <tr><td class="label"><span class="hint-text">UFX (FX revaluation) journals form part of the transfer-pricing stat adjustment; here they sit within the payments &amp; FX line.</span></td><td></td></tr>`;
+  } else {
+    $('#move-current').innerHTML = `
+      <tr><td class="label">Opening current tax payable</td>
+          <td class="num"><input class="amt" type="number" step="0.01" data-scalar="openingCurrentTaxPayable" value="${provision.openingCurrentTaxPayable}"></td></tr>
+      <tr><td class="label">Current year tax charge</td><td class="num">${acc(P.currentTax)}</td></tr>
+      <tr><td class="label">(Over)/under provision — prior years</td>
+          <td class="num"><input class="amt" type="number" step="0.01" data-scalar="priorYearAdjustment" value="${provision.priorYearAdjustment}"></td></tr>
+      <tr><td class="label">Tax paid during the year</td>
+          <td class="num"><input class="amt" type="number" step="0.01" data-scalar="taxPaid" value="${provision.taxPaid}"></td></tr>
+      <tr class="grand"><td class="label">Closing current tax payable</td><td class="num">${acc(P.closingPayable)}</td></tr>`;
+  }
 
   $('#move-deferred').innerHTML = `
     <tr><td class="label">Opening deferred tax ${P.openingDT >= 0 ? '(liability)' : 'asset'}</td><td class="num">${acc(P.openingDT)}</td></tr>
@@ -951,6 +979,7 @@ function renderData() {
   if ($('#s-capRate')) $('#s-capRate').value = settings.capRate;
   if ($('#s-sgdRate')) $('#s-sgdRate').value = settings.sgdRate;
   if ($('#s-remunCodes')) $('#s-remunCodes').value = settings.remunCodes;
+  if ($('#s-currentTaxCodes')) $('#s-currentTaxCodes').value = settings.currentTaxCodes;
 
   const f = provision.far;
   $('#far-status').innerHTML = f
@@ -1311,6 +1340,7 @@ function wire() {
     if ($('#s-capRate')) settings.capRate = num($('#s-capRate').value);
     if ($('#s-sgdRate')) settings.sgdRate = num($('#s-sgdRate').value) || 1.2854;
     if ($('#s-remunCodes')) settings.remunCodes = $('#s-remunCodes').value.trim();
+    if ($('#s-currentTaxCodes')) settings.currentTaxCodes = $('#s-currentTaxCodes').value.trim();
     saveSettings(); renderAll(); toast('Settings saved');
   });
 
