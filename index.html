@@ -24,6 +24,7 @@
     <button class="tab" data-tab="tb">Trial Balance</button>
     <button class="tab" data-tab="audit">Audit Adjustments</button>
     <button class="tab" data-tab="medical">Medical</button>
+    <button class="tab" data-tab="leases">Leases</button>
     <button class="tab" data-tab="current">Current Tax</button>
     <button class="tab" data-tab="deferred">Deferred Tax</button>
     <button class="tab" data-tab="recon">Tax Reconciliation</button>
@@ -138,6 +139,17 @@
         <div class="card"><h3 style="margin-top:0">Life insurance</h3><div id="life-calc"></div></div>
       </div>
       <div class="card"><h3 style="margin-top:0">Employee remuneration (cap base)</h3><div id="remun-detail"></div></div>
+    </section>
+
+    <!-- Leases (IFRS 16 / FRS 116) -->
+    <section class="view" id="view-leases">
+      <div class="view-head">
+        <div><h2>Leases (IFRS 16 / FRS 116)</h2><div class="desc">Reverse the FRS 116 depreciation &amp; interest, deduct actual rent; the whole adjustment derives from the lease GL accounts.</div></div>
+      </div>
+      <div class="two-col">
+        <div class="card"><h3 style="margin-top:0">STI adjustment (current tax)</h3><div id="lease-sti"></div></div>
+        <div class="card"><h3 style="margin-top:0">Deferred tax</h3><div id="lease-dt"></div></div>
+      </div>
     </section>
 
     <!-- Current tax -->
@@ -296,7 +308,7 @@
   <div class="toast" id="toast"></div>
   <script src="far-import.js?v=1"></script>
   <script src="tb-aus155.js?v=2"></script>
-  <script src="sample-data.js?v=5"></script>
-  <script src="app.js?v=15"></script>
+  <script src="sample-data.js?v=6"></script>
+  <script src="app.js?v=16"></script>
 </body>
 </html>
