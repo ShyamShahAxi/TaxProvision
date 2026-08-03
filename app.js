@@ -300,9 +300,15 @@ function recompute() {
   const closingTD = p.deferredItems.reduce((s, x) => s + defTD(x, 'closing'), 0);
   const openingDT = openingTD * r;
   const closingDT = closingTD * r;
-  const deferredCharge = closingDT - openingDT;   // + = expense (increase in liability)
+  const deferredCharge = closingDT - openingDT;   // total movement (+ = increase in liability)
+  // Split the deferred movement into a prior-year component (true-ups / under-
+  // over provision) and the current-year charge to P&L.
+  const priorTD = p.deferredItems.reduce((s, x) => s + num(x.priorMovement || 0), 0);
+  const deferredPriorYr = priorTD * r;            // prior-year deferred (under/over provision)
+  const deferredCY = deferredCharge - deferredPriorYr; // current-year deferred tax to P&L
 
   const priorAdj = num(p.priorYearAdjustment);
+  const priorYearProvision = priorAdj + deferredPriorYr;  // total prior-year (over)/under provision
   const currentTaxExpense = currentTax + priorAdj;
   const totalTaxExpense = currentTaxExpense + deferredCharge;
   const etr = pbt !== 0 ? totalTaxExpense / pbt : 0;
@@ -316,6 +322,7 @@ function recompute() {
     adjusted, lossesBF, lossOffset, ciBeforeExempt, currentYearLoss, lossesCF,
     exemption, exemptionSGD, fx, chargeableIncome, grossTax, rebate, netTaxOnProfit, ftc, currentTax,
     openingTD, closingTD, openingDT, closingDT, deferredCharge,
+    priorTD, deferredPriorYr, deferredCY, priorYearProvision,
     priorAdj, currentTaxExpense, totalTaxExpense, etr, closingPayable,
   };
 }
@@ -354,7 +361,7 @@ function renderDashboard(P) {
     { label: 'Profit before tax', value: acc(P.pbt) },
     { label: 'Chargeable income', value: fmt(P.chargeableIncome) },
     { label: 'Current tax', value: fmt(P.currentTax), hint: 'YA ' + settings.ya },
-    { label: 'Deferred tax ' + (P.deferredCharge >= 0 ? 'charge' : 'credit'), value: acc(P.deferredCharge) },
+    { label: 'Deferred tax ' + (P.deferredCY >= 0 ? 'charge' : 'credit'), value: acc(P.deferredCY), hint: 'current year' },
     { label: 'Total tax expense', value: acc(P.totalTaxExpense), accent: true },
     { label: 'Effective tax rate', value: pct(P.etr * 100), hint: 'statutory ' + pct(settings.taxRate) },
   ];
@@ -365,8 +372,8 @@ function renderDashboard(P) {
 
   $('#dash-charge').innerHTML = `<table class="comp-table"><tbody>
     <tr><td class="label">Current tax — current year</td><td class="num">${acc(P.currentTax)}</td></tr>
-    <tr><td class="label">Current tax — prior year (over)/under provision</td><td class="num">${acc(P.priorAdj)}</td></tr>
-    <tr><td class="label">Deferred tax — origination/(reversal) of temporary differences</td><td class="num">${acc(P.deferredCharge)}</td></tr>
+    <tr><td class="label">Deferred tax — current year</td><td class="num">${acc(P.deferredCY)}</td></tr>
+    <tr><td class="label">(Over)/under provision in respect of prior years</td><td class="num">${acc(P.priorYearProvision)}</td></tr>
     <tr class="grand"><td class="label">Income tax expense</td><td class="num">${acc(P.totalTaxExpense)}</td></tr>
   </tbody></table>
   <p class="legend">Closing deferred tax ${dtLabel}: ${fmt(Math.abs(P.closingDT))} on a temporary difference of ${acc(P.closingTD)} at ${pct(settings.taxRate)}.</p>`;
@@ -721,18 +728,21 @@ function renderDeferred(P) {
   const r = P.r;
   const body = $('#deferred-body');
   if (!provision.deferredItems.length) {
-    body.innerHTML = `<tr class="empty-row"><td colspan="6">No temporary differences. Add one, or import a FAR backup.</td></tr>`;
+    body.innerHTML = `<tr class="empty-row"><td colspan="7">No temporary differences. Add one, or import a FAR backup.</td></tr>`;
   } else {
     body.innerHTML = provision.deferredItems.map((x, i) => {
       const op = defTD(x, 'opening'), cl = defTD(x, 'closing');
+      const pr = num(x.priorMovement || 0), cy = cl - op - pr;
+      const priorCell = `<td class="num"><input class="amt" type="number" step="0.01" data-key="priorMovement" value="${num(x.priorMovement || 0)}"></td>`;
       if (defLinked(x)) {
-        // TB-linked → read-only, formatted, no delete.
+        // Opening/closing TB-linked (read-only); prior-year movement is a manual true-up.
         const opAdj = defOpeningOverridden(x);
         return `<tr data-line="deferredItems" data-idx="${i}">
           <td>${esc(x.label)} <span class="src-tag">TB</span></td>
           <td class="num" title="${opAdj ? 'FY26 opening corrected to signed financials (prior-year WIP)' : exact(op)}">${acc(op)}${opAdj ? ' <span class="src-tag" style="background:var(--amber-bg);color:var(--amber)">adj</span>' : ''}</td>
+          ${priorCell}
+          <td class="num" title="${exact(cy)}">${acc(cy)}</td>
           <td class="num" title="${exact(cl)}">${acc(cl)}</td>
-          <td class="num">${acc(cl - op)}</td>
           <td class="num">${acc(cl * r)}</td>
           <td class="act"></td>
         </tr>`;
@@ -740,8 +750,9 @@ function renderDeferred(P) {
       return `<tr data-line="deferredItems" data-idx="${i}">
         <td><input class="desc-in" data-key="label" value="${attr(x.label)}" placeholder="e.g. accelerated capital allowances">${x.source === 'far' ? '<span class="src-tag">FAR</span>' : ''}</td>
         <td class="num"><input class="amt" type="number" step="0.01" data-key="openingTD" value="${x.openingTD}"></td>
+        ${priorCell}
+        <td class="num">${acc(cy)}</td>
         <td class="num"><input class="amt" type="number" step="0.01" data-key="closingTD" value="${x.closingTD}"></td>
-        <td class="num">${acc(cl - op)}</td>
         <td class="num">${acc(cl * r)}</td>
         <td class="act"><button class="ghost sm" data-act="del-line" title="Remove">&times;</button></td>
       </tr>`;
@@ -750,12 +761,13 @@ function renderDeferred(P) {
   $('#deferred-foot').innerHTML = `<tr>
     <td>Total — deferred tax ${P.closingDT >= 0 ? 'liability' : 'asset'}</td>
     <td class="num">${acc(P.openingTD)}</td>
+    <td class="num">${acc(P.priorTD)}</td>
+    <td class="num">${acc(P.closingTD - P.openingTD - P.priorTD)}</td>
     <td class="num">${acc(P.closingTD)}</td>
-    <td class="num">${acc(P.closingTD - P.openingTD)}</td>
     <td class="num">${acc(P.closingDT)}</td><td></td></tr>`;
   $('#deferred-note').innerHTML =
     `Opening deferred tax ${fmt(Math.abs(P.openingDT))} ${P.openingDT >= 0 ? 'liability' : 'asset'} → closing ${fmt(Math.abs(P.closingDT))} ${P.closingDT >= 0 ? 'liability' : 'asset'} at ${pct(settings.taxRate)}. ` +
-    `Movement of ${acc(P.deferredCharge)} is ${P.deferredCharge >= 0 ? 'charged to' : 'credited to'} profit or loss.` +
+    `Movement of ${acc(P.deferredCharge)}: prior-year ${acc(P.deferredPriorYr)} (under/over provision) and current-year ${acc(P.deferredCY)} to profit or loss.` +
     (provision.deferredItems.some(defOpeningOverridden) ? ` &nbsp;The FY26 opening includes a prior-year correction — WIP previously treated as a deferred tax asset has reclassified to software development — giving a net opening DTL of ${fmt(Math.abs(P.openingDT))} per the signed accounts.` : '');
 }
 
@@ -769,7 +781,7 @@ function reconLines(P) {
   if (P.exemption) rows.push({ label: 'Benefit of ' + exemptionLabel(), amt: -P.exemption * r });
   if (P.rebate) rows.push({ label: 'Corporate income tax rebate', amt: -P.rebate });
   if (P.ftc) rows.push({ label: 'Foreign tax credits', amt: -P.ftc });
-  if (P.priorAdj) rows.push({ label: '(Over)/under provision in respect of prior years', amt: P.priorAdj });
+  if (P.priorYearProvision) rows.push({ label: '(Over)/under provision in respect of prior years', amt: P.priorYearProvision });
   const explained = rows.reduce((t, x) => t + x.amt, 0);
   const other = P.totalTaxExpense - explained;
   if (Math.abs(other) > 0.005) rows.push({ label: 'Deferred tax not recognised on losses / other', amt: other });
@@ -799,7 +811,8 @@ function renderMovement(P) {
 
   $('#move-deferred').innerHTML = `
     <tr><td class="label">Opening deferred tax ${P.openingDT >= 0 ? '(liability)' : 'asset'}</td><td class="num">${acc(P.openingDT)}</td></tr>
-    <tr><td class="label">Charge/(credit) to profit or loss</td><td class="num">${acc(P.deferredCharge)}</td></tr>
+    <tr><td class="label">Prior year (over)/under provision</td><td class="num">${acc(P.deferredPriorYr)}</td></tr>
+    <tr><td class="label">Current year charge/(credit) to profit or loss</td><td class="num">${acc(P.deferredCY)}</td></tr>
     <tr class="grand"><td class="label">Closing deferred tax ${P.closingDT >= 0 ? '(liability)' : 'asset'}</td><td class="num">${acc(P.closingDT)}</td></tr>
     <tr><td class="label"><span class="hint-text">Underlying temporary difference</span></td><td class="num"><span class="hint-text">${acc(P.closingTD)}</span></td></tr>`;
 }
@@ -884,10 +897,12 @@ function renderNotes(P) {
     <div class="table-wrap"><table class="comp-table"><tbody>
       <tr class="section"><td colspan="2">Current tax</td></tr>
       <tr><td class="label">Current year</td><td class="num">${acc(P.currentTax)}</td></tr>
-      <tr><td class="label">(Over)/under provision in respect of prior years</td><td class="num">${acc(P.priorAdj)}</td></tr>
-      <tr class="subtotal"><td class="label">Total current tax</td><td class="num">${acc(P.currentTaxExpense)}</td></tr>
       <tr class="section"><td colspan="2">Deferred tax</td></tr>
-      <tr><td class="label">Origination and reversal of temporary differences</td><td class="num">${acc(P.deferredCharge)}</td></tr>
+      <tr><td class="label">Origination and reversal of temporary differences — current year</td><td class="num">${acc(P.deferredCY)}</td></tr>
+      <tr class="section"><td colspan="2">Prior years</td></tr>
+      <tr><td class="label">(Over)/under provision — current tax</td><td class="num">${acc(P.priorAdj)}</td></tr>
+      <tr><td class="label">(Over)/under provision — deferred tax</td><td class="num">${acc(P.deferredPriorYr)}</td></tr>
+      <tr class="subtotal"><td class="label">Total (over)/under provision — prior years</td><td class="num">${acc(P.priorYearProvision)}</td></tr>
       <tr class="grand"><td class="label">Income tax expense</td><td class="num">${acc(P.totalTaxExpense)}</td></tr>
     </tbody></table></div>
   </div>
