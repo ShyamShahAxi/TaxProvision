@@ -874,10 +874,19 @@ function buildJournals(P) {
   const cr = (account, name, amt) => ({ account, name, dr: 0, cr: amt });
   const js = [];
 
-  // Current tax — the only journal to post is the current-year provision.
-  // FY25 balances and the FX revaluation are already in the ledger / stat
-  // adjustment, so they are not re-journalled here.
-  if (Math.abs(P.currentTax) > 0.005) {
+  // Current tax — post the provision adjustment (expected − ledger) to the real
+  // tax accounts, balancing to income tax expense. FX revaluation is already in
+  // the ledger / stat adjustment and is not re-journalled.
+  if (hasCurrentTaxTB()) {
+    const tm = tbMap(), am = auditMap();
+    const lines = []; let net = 0;
+    currentTaxAccounts().forEach(c => {
+      const r = tm[c]; const j = expectedTaxByAccount(c, P) - afterStatByAccount(c, tm, am);
+      if (Math.abs(j) > 0.005) { lines.push(j > 0 ? dr(c, r ? r.name : '', j) : cr(c, r ? r.name : '', -j)); net += j; }
+    });
+    if (Math.abs(net) > 0.005) lines.push(net < 0 ? dr(s.glTaxExpense, 'Income tax expense', -net) : cr(s.glTaxExpense, 'Income tax expense', net));
+    if (lines.length) js.push({ ref: 'CT-1', narrative: 'Current tax — provision adjustment to expected closing (YA ' + s.ya + ')', lines });
+  } else if (Math.abs(P.currentTax) > 0.005) {
     js.push({ ref: 'CT-1', narrative: 'Current year income tax provision — YA ' + s.ya, lines: [
       dr(s.glTaxExpense, 'Income tax expense — current', P.currentTax),
       cr(s.glTaxPayable, 'Provision for income tax', P.currentTax),
@@ -898,20 +907,21 @@ function renderJournals(P) {
   if (hasCurrentTaxTB()) {
     const tm = tbMap(), am = auditMap();
     const accts = currentTaxAccounts();
+    const ledgerFY26 = -afterStatByAccount(settings.glTaxExpense, tm, am);   // current-year accrual booked (income tax expense)
     const opening = c => { const r = tm[c]; return r ? num(r.opening) : 0; };
-    const fy26 = c => fy26TaxByAccount(c, P);
-    const closing = c => expectedTaxByAccount(c, P);                 // opening + FY25 + FY26
-    const fy25 = c => closing(c) - opening(c) - fy26(c);             // derived prior-year movement
-    const tbStat = c => afterStatByAccount(c, tm, am);               // per TB + stat adjustments
-    const diff = c => closing(c) - tbStat(c);                        // FX revaluation (already booked)
+    const tbStat = c => afterStatByAccount(c, tm, am);               // per TB + stat adjustments (reval removed)
+    const fy26 = c => (c === (settings.glTaxPayable || '260100') ? ledgerFY26 : 0); // current-year accrual per ledger
+    const fy25 = c => tbStat(c) - opening(c) - fy26(c);             // prior-year movement per ledger (balancing)
+    const expected = c => expectedTaxByAccount(c, P);               // provision closing (current + prior accrual)
+    const journal = c => expected(c) - tbStat(c);                   // journal to post (provision adjustment)
     const nm = c => { const r = tm[c]; return r ? r.name : c; };
     const rowsDef = [
       { label: 'Opening balance', fn: opening },
-      { label: 'FY25 movement (prior year)', fn: fy25 },
-      { label: 'FY26 movement (current year charge)', fn: fy26 },
-      { label: 'Closing balance (per provision)', fn: closing, cls: 'subtotal' },
-      { label: 'Per trial balance + stat adjustments', fn: tbStat },
-      { label: 'Difference — FX revaluation (already booked)', fn: diff, cls: 'grand' },
+      { label: 'FY25 movement (prior year, per ledger)', fn: fy25 },
+      { label: 'FY26 movement (current year accrual, per ledger)', fn: fy26 },
+      { label: 'Closing per TB + stat adjustments', fn: tbStat, cls: 'subtotal' },
+      { label: 'Expected closing (provision)', fn: expected },
+      { label: 'Journal to post (provision adjustment)', fn: journal, cls: 'grand' },
     ];
     const th = accts.map(c => `<th class="num" title="${attr(nm(c))}">${esc(c)}</th>`).join('');
     const body = rowsDef.map(r => {
@@ -921,12 +931,12 @@ function renderJournals(P) {
     }).join('');
     recCard = `<div class="card">
       <h3 style="margin:0 0 2px">Current tax — provision roll-forward by account</h3>
-      <div class="note-sub" style="color:var(--muted);font-size:0.82rem;margin-bottom:10px">Opening + FY25 + FY26 = closing per the provision, then compared with the ledger (per TB + stat). Ledger sign — a payable (credit) is in parentheses.</div>
+      <div class="note-sub" style="color:var(--muted);font-size:0.82rem;margin-bottom:10px">Opening + FY25 + FY26 (per ledger) = closing per TB + stat; the expected provision differs by the journal to post. Ledger sign — a payable (credit) is in parentheses.</div>
       <div class="table-wrap"><table>
         <thead><tr><th>Movement</th>${th}<th class="num">Total</th></tr></thead>
         <tbody>${body}</tbody>
       </table></div>
-      <p class="legend">FY26 = the current-year charge (${fmt(P.currentTax)}, posted to ${esc(settings.glTaxPayable)}); FY25 = the prior-year movement (return still open). The difference to the ledger is the FX revaluation, which is already booked via the stat adjustment — so only the FY26 charge (CT-1 below) is journalled.</p>
+      <p class="legend">FY26 = the current-year accrual actually booked (income tax expense ${fmt(-ledgerFY26)}); FY25 = the prior-year movement in the ledger. Reval is already removed via the stat adjustment. The <strong>journal to post</strong> is the real provision adjustment — the current-year top-up (correct charge ${fmt(P.currentTax)} − booked ${fmt(-ledgerFY26)}) plus the prior-year true-up — posted in CT-1 below.</p>
     </div>`;
   }
   const js = buildJournals(P);
