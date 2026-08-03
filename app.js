@@ -210,15 +210,20 @@ function computedSources() {
    carrying amount is a taxable difference (DTL, positive); a provision's credit
    balance is a deductible difference (DTA, negative). Otherwise use stored values. */
 function defTD(x, which) {
-  if (Array.isArray(x.tdAccounts) && x.tdAccounts.length) {
-    // Optional opening override (e.g. a prior-year correction) — closing always from TB.
-    if (which === 'opening' && x.openingTD != null && x.openingTD !== '') return num(x.openingTD);
-    return x.tdAccounts.reduce((s, c) => s + leaseAmt(c, which), 0);
-  }
+  if (Array.isArray(x.tdAccounts) && x.tdAccounts.length) return x.tdAccounts.reduce((s, c) => s + leaseAmt(c, which), 0);
   if (x.source === 'ifrs16') return leaseTD(which);
   return num(which === 'opening' ? x.openingTD : x.closingTD);
 }
 function defLinked(x) { return (Array.isArray(x.tdAccounts) && x.tdAccounts.length) || x.source === 'ifrs16'; }
+/* Prior-year movement (derived, not editable): for a TB-linked item whose signed
+   opening (openingTD override) differs from the TB opening, that difference is
+   the prior-year correction/true-up. Opening + prior year = signed opening. */
+function defPriorTD(x) {
+  if (Array.isArray(x.tdAccounts) && x.tdAccounts.length && x.openingTD != null && x.openingTD !== '') {
+    return num(x.openingTD) - x.tdAccounts.reduce((s, c) => s + leaseAmt(c, 'opening'), 0);
+  }
+  return num(x.priorMovement || 0);
+}
 function defOpeningOverridden(x) { return Array.isArray(x.tdAccounts) && x.tdAccounts.length && x.openingTD != null && x.openingTD !== ''; }
 
 /* Effective amount of an add-back/deduction. The `account` field selects a
@@ -303,7 +308,7 @@ function recompute() {
   const deferredCharge = closingDT - openingDT;   // total movement (+ = increase in liability)
   // Split the deferred movement into a prior-year component (true-ups / under-
   // over provision) and the current-year charge to P&L.
-  const priorTD = p.deferredItems.reduce((s, x) => s + num(x.priorMovement || 0), 0);
+  const priorTD = p.deferredItems.reduce((s, x) => s + defPriorTD(x), 0);
   const deferredPriorYr = priorTD * r;            // prior-year deferred (under/over provision)
   const deferredCY = deferredCharge - deferredPriorYr; // current-year deferred tax to P&L
 
@@ -728,21 +733,22 @@ function renderDeferred(P) {
   const r = P.r;
   const body = $('#deferred-body');
   if (!provision.deferredItems.length) {
-    body.innerHTML = `<tr class="empty-row"><td colspan="7">No temporary differences. Add one, or import a FAR backup.</td></tr>`;
+    body.innerHTML = `<tr class="empty-row"><td colspan="8">No temporary differences. Add one, or import a FAR backup.</td></tr>`;
   } else {
     body.innerHTML = provision.deferredItems.map((x, i) => {
       const op = defTD(x, 'opening'), cl = defTD(x, 'closing');
-      const pr = num(x.priorMovement || 0), cy = cl - op - pr;
-      const priorCell = `<td class="num"><input class="amt" type="number" step="0.01" data-key="priorMovement" value="${num(x.priorMovement || 0)}"></td>`;
+      const pr = defPriorTD(x), cy = cl - op - pr;
+      const opAdj = defOpeningOverridden(x);
+      const priorCell = `<td class="num" title="${opAdj ? 'Prior-year correction embedded in the signed opening (opening + prior = signed)' : exact(pr)}">${acc(pr)}${opAdj ? ' <span class="src-tag" style="background:var(--amber-bg);color:var(--amber)">adj</span>' : ''}</td>`;
       if (defLinked(x)) {
-        // Opening/closing TB-linked (read-only); prior-year movement is a manual true-up.
-        const opAdj = defOpeningOverridden(x);
+        // Opening/closing/prior all derived from the TB — read-only.
         return `<tr data-line="deferredItems" data-idx="${i}">
           <td>${esc(x.label)} <span class="src-tag">TB</span></td>
-          <td class="num" title="${opAdj ? 'FY26 opening corrected to signed financials (prior-year WIP)' : exact(op)}">${acc(op)}${opAdj ? ' <span class="src-tag" style="background:var(--amber-bg);color:var(--amber)">adj</span>' : ''}</td>
+          <td class="num" title="${exact(op)}">${acc(op)}</td>
           ${priorCell}
           <td class="num" title="${exact(cy)}">${acc(cy)}</td>
           <td class="num" title="${exact(cl)}">${acc(cl)}</td>
+          <td class="num">${acc(op * r)}</td>
           <td class="num">${acc(cl * r)}</td>
           <td class="act"></td>
         </tr>`;
@@ -753,6 +759,7 @@ function renderDeferred(P) {
         ${priorCell}
         <td class="num">${acc(cy)}</td>
         <td class="num"><input class="amt" type="number" step="0.01" data-key="closingTD" value="${x.closingTD}"></td>
+        <td class="num">${acc(op * r)}</td>
         <td class="num">${acc(cl * r)}</td>
         <td class="act"><button class="ghost sm" data-act="del-line" title="Remove">&times;</button></td>
       </tr>`;
@@ -764,11 +771,12 @@ function renderDeferred(P) {
     <td class="num">${acc(P.priorTD)}</td>
     <td class="num">${acc(P.closingTD - P.openingTD - P.priorTD)}</td>
     <td class="num">${acc(P.closingTD)}</td>
+    <td class="num">${acc(P.openingDT)}</td>
     <td class="num">${acc(P.closingDT)}</td><td></td></tr>`;
   $('#deferred-note').innerHTML =
     `Opening deferred tax ${fmt(Math.abs(P.openingDT))} ${P.openingDT >= 0 ? 'liability' : 'asset'} → closing ${fmt(Math.abs(P.closingDT))} ${P.closingDT >= 0 ? 'liability' : 'asset'} at ${pct(settings.taxRate)}. ` +
     `Movement of ${acc(P.deferredCharge)}: prior-year ${acc(P.deferredPriorYr)} (under/over provision) and current-year ${acc(P.deferredCY)} to profit or loss.` +
-    (provision.deferredItems.some(defOpeningOverridden) ? ` &nbsp;The FY26 opening includes a prior-year correction — WIP previously treated as a deferred tax asset has reclassified to software development — giving a net opening DTL of ${fmt(Math.abs(P.openingDT))} per the signed accounts.` : '');
+    (provision.deferredItems.some(defOpeningOverridden) ? ` &nbsp;The prior-year movement of ${acc(P.deferredPriorYr)} is a correction — WIP previously treated as a deferred tax asset, now reclassified to software development. Opening ${fmt(Math.abs(P.openingDT))} + prior year = the signed opening DTL of ${fmt(Math.abs(P.openingDT + P.deferredPriorYr))}.` : '');
 }
 
 /* ----- Reconciliation ----- */
