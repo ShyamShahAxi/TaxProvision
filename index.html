@@ -114,10 +114,12 @@
       </div>
       <div class="card">
         <div class="view-head" style="margin-bottom:12px">
-          <div><h3 style="margin:0">Insurance premiums</h3><div class="desc">Attach the premium breakdown; each policy is classified Life or Medical.</div></div>
+          <div><h3 style="margin:0">Insurance premiums</h3><div class="desc">Figures come from the breakdown (CSV) or manual entry; each policy is classified Life or Medical. Attach the insurer's invoice (PDF) as the supporting document.</div></div>
           <div class="toolbar">
-            <button class="primary sm" id="btn-attach-prem">Attach insurance premiums</button>
+            <button class="primary sm" id="btn-attach-prem">Attach breakdown (CSV)</button>
             <input type="file" id="prem-file" accept=".csv,text/csv" style="display:none">
+            <button id="btn-attach-pdf">Attach invoice (PDF)</button>
+            <input type="file" id="pdf-file" accept="application/pdf,.pdf" style="display:none">
             <button id="btn-add-prem">+ Add premium</button>
             <button id="btn-clear-prem">Clear</button>
           </div>
@@ -129,6 +131,7 @@
             <tfoot id="prem-foot"></tfoot>
           </table>
         </div>
+        <div id="prem-doc" class="legend" style="margin-top:10px"></div>
       </div>
       <div class="two-col">
         <div class="card"><h3 style="margin-top:0">Medical expense capping</h3><div id="medical-calc"></div></div>
@@ -292,6 +295,6 @@
   <script src="far-import.js?v=1"></script>
   <script src="tb-aus155.js?v=2"></script>
   <script src="sample-data.js?v=4"></script>
-  <script src="app.js?v=13"></script>
+  <script src="app.js?v=14"></script>
 </body>
 </html>
