@@ -179,12 +179,35 @@ function tbProfitBeforeTax() {
 /* Is net-profit-before-tax linked to the TB? (Only when a TB with P&L exists.) */
 function pbtIsLinked() { return provision.pbtLinked !== false && provision.tb.some(a => /^[4567]/.test(String(a.code))); }
 
+/* ---------- IFRS 16 / FRS 116 leases ----------
+   The whole lease tax adjustment derives from the lease GL accounts:
+     - reversal (add back) = ROU depreciation (670150) + lease interest (680120)
+     - the net temporary difference = ROU asset carrying (140300+140310) less the
+       lease liability (140340 + make-good 250900); its year movement equals the
+       net current-tax deduction (dep+interest − rent). */
+const IFRS16_TD_ACCS = ['140300', '140310', '140340', '250900'];
+function leaseAmt(code, which) {
+  const r = tbMap()[code]; if (!r) return 0;
+  return which === 'opening' ? num(r.opening) : num(r.closing) + (auditMap()[code] || 0);
+}
+function leaseDep() { return Math.abs(leaseAmt('670150', 'closing')); }
+function leaseInterest() { return Math.abs(leaseAmt('680120', 'closing')); }
+function leaseTD(which) { return IFRS16_TD_ACCS.reduce((s, c) => s + leaseAmt(c, which), 0); }
+function leaseNetAdjustment() { return leaseTD('closing') - leaseTD('opening'); } // ΔTD = net deduction magnitude
+
 /* Computed link sources for add-backs/deductions (account values starting @). */
 function computedSources() {
   return {
     '@medical.life': lifeInsuranceTotal(),
     '@medical.addback': medicalAddback(),
+    '@ifrs16': leaseNetAdjustment(),
   };
+}
+
+/* Temporary difference for a deferred item — computed for FRS 116, else stored. */
+function defTD(x, which) {
+  if (x.source === 'ifrs16') return leaseTD(which);
+  return num(which === 'opening' ? x.openingTD : x.closingTD);
 }
 
 /* Effective amount of an add-back/deduction. The `account` field selects a
@@ -258,8 +281,8 @@ function recompute() {
   const currentTax = Math.max(0, netTaxOnProfit - ftc);
 
   // Deferred tax on temporary differences (carrying amount − tax base).
-  const openingTD = sum(p.deferredItems, 'openingTD');
-  const closingTD = sum(p.deferredItems, 'closingTD');
+  const openingTD = p.deferredItems.reduce((s, x) => s + defTD(x, 'opening'), 0);
+  const closingTD = p.deferredItems.reduce((s, x) => s + defTD(x, 'closing'), 0);
   const openingDT = openingTD * r;
   const closingDT = closingTD * r;
   const deferredCharge = closingDT - openingDT;   // + = expense (increase in liability)
@@ -299,6 +322,7 @@ function render() {
   else if (activeTab === 'tb') renderTB();
   else if (activeTab === 'audit') renderAudit();
   else if (activeTab === 'medical') renderMedical();
+  else if (activeTab === 'leases') renderLeases();
   else if (activeTab === 'current') renderCurrent(P);
   else if (activeTab === 'deferred') renderDeferred(P);
   else if (activeTab === 'recon') renderRecon(P);
@@ -545,6 +569,39 @@ function renderMedical() {
   }</tbody><tfoot><tr><td colspan="2">Total employee remuneration</td><td class="num" title="${exact(rem)}">${money(rem)}</td></tr></tfoot></table></div>`;
 }
 
+/* ----- Leases (IFRS 16 / FRS 116) ----- */
+function renderLeases() {
+  const r = num(settings.taxRate) / 100;
+  const dep = leaseDep(), int = leaseInterest();
+  const reverseDepInt = dep + int;
+  const dO = leaseTD('opening'), dC = leaseTD('closing');
+  const net = dC - dO;                 // net current-tax deduction (dep+interest − rent)
+  const rent = reverseDepInt + net;    // implied rent paid
+  const rou = leaseAmt('140300', 'closing') + leaseAmt('140310', 'closing');
+  const liab = leaseAmt('140340', 'closing') + leaseAmt('250900', 'closing');
+
+  $('#lease-sti').innerHTML = `<table class="comp-table"><tbody>
+    <tr class="section"><td colspan="2">FRS 116 charges reversed (add back)</td></tr>
+    <tr><td class="label">Depreciation — leasehold / ROU assets (670150)</td><td class="num" title="${exact(dep)}">${fmt(dep)}</td></tr>
+    <tr><td class="label">Lease interest expense (680120)</td><td class="num" title="${exact(int)}">${fmt(int)}</td></tr>
+    <tr class="subtotal"><td class="label">Reverse — FRS 116 depreciation &amp; interest</td><td class="num" title="${exact(reverseDepInt)}">${fmt(reverseDepInt)}</td></tr>
+    <tr class="section"><td colspan="2">Rent deductible for tax</td></tr>
+    <tr><td class="label">Reverse — rent paid (deduct)</td><td class="num" title="${exact(rent)}">${acc(-rent)}</td></tr>
+    <tr class="grand"><td class="label">Net STI adjustment (deduction)</td><td class="num" title="${exact(net)}">${acc(-net)}</td></tr>
+  </tbody></table>
+  <p class="legend">Singapore tax follows the pre-FRS 116 treatment: the ROU depreciation and lease interest are added back and the actual rent is deducted. The net (${acc(-net)}) flows to Current Tax as a temporary deduction (<span class="src-tag">@ifrs16</span>). Rent (${fmt(rent)}) = depreciation + interest + the movement in the lease temporary difference; all figures derive from the trial balance.</p>`;
+
+  $('#lease-dt').innerHTML = `<table class="comp-table"><tbody>
+    <tr class="section"><td colspan="2">Deferred tax — DTA/(DTL)</td></tr>
+    <tr><td class="label">Leasehold / ROU assets — carrying (140300 + 140310)</td><td class="num" title="${exact(rou)}">${acc(rou)}</td></tr>
+    <tr><td class="label">Leasehold liability (140340 + make-good 250900)</td><td class="num" title="${exact(liab)}">${acc(liab)}</td></tr>
+    <tr class="subtotal"><td class="label">Net temporary difference (closing)</td><td class="num" title="${exact(dC)}">${acc(dC)}</td></tr>
+    <tr><td class="label">Net temporary difference (opening)</td><td class="num" title="${exact(dO)}">${acc(dO)}</td></tr>
+    <tr class="grand"><td class="label">Deferred tax asset/(liability) @ ${pct(settings.taxRate)}</td><td class="num" title="${exact(dC * r)}">${acc(dC * r)}</td></tr>
+  </tbody></table>
+  <p class="legend">The ROU asset (tax base nil) is a taxable difference; the lease liability and make-good provision are deductible differences. The net (${acc(dC)}) feeds the FRS 116 line in Deferred Tax.</p>`;
+}
+
 /* ----- Current tax computation ----- */
 function lineRows(list, listName) {
   if (!list.length) return `<tr><td class="indent" colspan="4"><span class="hint-text">No items.</span></td></tr>`;
@@ -652,13 +709,23 @@ function renderDeferred(P) {
     body.innerHTML = `<tr class="empty-row"><td colspan="6">No temporary differences. Add one, or import a FAR backup.</td></tr>`;
   } else {
     body.innerHTML = provision.deferredItems.map((x, i) => {
-      const mv = (num(x.closingTD) - num(x.openingTD));
+      const op = defTD(x, 'opening'), cl = defTD(x, 'closing');
+      if (x.source === 'ifrs16') {
+        return `<tr data-line="deferredItems" data-idx="${i}">
+          <td>${esc(x.label)} <span class="src-tag">TB</span></td>
+          <td class="num" title="${exact(op)}">${acc(op)}</td>
+          <td class="num" title="${exact(cl)}">${acc(cl)}</td>
+          <td class="num">${acc(cl - op)}</td>
+          <td class="num">${acc(cl * r)}</td>
+          <td class="act"></td>
+        </tr>`;
+      }
       return `<tr data-line="deferredItems" data-idx="${i}">
         <td><input class="desc-in" data-key="label" value="${attr(x.label)}" placeholder="e.g. accelerated capital allowances">${x.source === 'far' ? '<span class="src-tag">FAR</span>' : ''}</td>
         <td class="num"><input class="amt" type="number" step="0.01" data-key="openingTD" value="${x.openingTD}"></td>
         <td class="num"><input class="amt" type="number" step="0.01" data-key="closingTD" value="${x.closingTD}"></td>
-        <td class="num">${acc(mv)}</td>
-        <td class="num">${acc(num(x.closingTD) * r)}</td>
+        <td class="num">${acc(cl - op)}</td>
+        <td class="num">${acc(cl * r)}</td>
         <td class="act"><button class="ghost sm" data-act="del-line" title="Remove">&times;</button></td>
       </tr>`;
     }).join('');
@@ -1272,6 +1339,8 @@ function restoreSampleLines() {
   if (typeof sampleProvision !== 'function') return;
   const s = sampleProvision();
   const key = x => x.account || x.label;
+  // Migrate: drop the old manual IFRS 16 deduction (now computed via @ifrs16).
+  provision.deductions = (provision.deductions || []).filter(x => !(!x.account && /IFRS ?16|FRS ?116/i.test(x.label || '')));
   ['addBacks', 'deductions'].forEach(list => {
     const have = new Set((provision[list] || []).map(key));
     s[list].forEach(x => { if (!have.has(key(x))) provision[list].push(x); });
@@ -1283,7 +1352,7 @@ function restoreSampleLines() {
   if (!provision.tb.length && s.tb.length) provision.tb = s.tb;
   saveProvision();
 }
-const HEAL_KEY = 'taxprov.heal.v1';
+const HEAL_KEY = 'taxprov.heal.v2';
 if (localStorage.getItem(INIT_KEY) && !localStorage.getItem(HEAL_KEY)) {
   restoreSampleLines();  // existing sessions: top up standard lines lost to earlier ✕ deletes
 }

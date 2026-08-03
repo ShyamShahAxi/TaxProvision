@@ -58,7 +58,7 @@ function sampleProvision() {
       L('Capital allowances — Computer Equipment', 177802, 'temporary', 'manual', '140100#debit'),
       L('Leave provision — opening balance reversed', 147087, 'temporary', 'manual', '270300#opening'),
       L('Accrued commissions — opening balance reversed', 13134, 'temporary', 'manual', '250200#opening'),
-      L('IFRS 16 lease adjustment (ROU depreciation + interest, net of payments)', 14434, 'temporary'),
+      L('IFRS 16 / FRS 116 lease adjustment (net)', 14494, 'temporary', 'manual', '@ifrs16'),
     ],
 
     lossesBroughtForward: 0,
@@ -74,6 +74,7 @@ function sampleProvision() {
     deferredItems: [
       D('Leave provision', -147087, -135008),
       D('Accrued commissions', -13134, -76832),
+      { id: uid(), label: 'FRS 116 leases (ROU vs lease liability)', openingTD: -24127, closingTD: -9633, source: 'ifrs16' },
     ],
 
     openingCurrentTaxPayable: 0,
