@@ -15,24 +15,15 @@
 
 'use strict';
 
-function loadSample() {
-  settings = Object.assign({}, defaultSettings, {
-    companyName: 'AxiCorp Pte Ltd',
-    currency: '$',
-    ya: '2026',
-    periodEnd: '2026-06-30',
-    taxRate: 17,
-    exemption: 'partial',
-    rebatePct: 0,
-    rebateCap: 0,
-  });
-
+/* The sample provision object (no globals touched) — reused for the one-time
+   self-heal that restores missing standard automated lines. */
+function sampleProvision() {
   // account = GL code linked to the trial balance; when set, the amount pulls
   // from the TB automatically (the manual amount is kept only as a fallback).
   const L = (label, amount, type, source, account) => ({ id: uid(), label, amount, type: type || 'permanent', source: source || 'manual', account: account || '' });
   const D = (label, openingTD, closingTD, source) => ({ id: uid(), label, openingTD, closingTD, source: source || 'manual' });
   const P = (policy, type, amount) => ({ id: uid(), policy, type, amount });
-  provision = Object.assign(emptyProvision(), {
+  return {
     profitBeforeTax: 317389,
 
     // Full AUS155 FY26 trial balance (from tb-aus155.js), sorted by account number.
@@ -89,5 +80,19 @@ function loadSample() {
     priorYearAdjustment: 0,
     taxPaid: 0,
     far: null,
+  };
+}
+
+function loadSample() {
+  settings = Object.assign({}, defaultSettings, {
+    companyName: 'AxiCorp Pte Ltd',
+    currency: '$',
+    ya: '2026',
+    periodEnd: '2026-06-30',
+    taxRate: 17,
+    exemption: 'partial',
+    rebatePct: 0,
+    rebateCap: 0,
   });
+  provision = Object.assign(emptyProvision(), sampleProvision());
 }
