@@ -28,6 +28,7 @@ const defaultSettings = {
   capRate: 1,
   medicalCode: '600550',   // staff medical GL account
   remunCodes: '600100,600110,600140,600150,510100,600180,600210,600305,600310',
+  sgdRate: 1.2854,         // S$ per US$ — converts the SGD tax-exemption thresholds to USD
   // GL accounts for the provision journals (editable — defaults match the AUS155 workpaper where known)
   glTaxExpense: '700100',       // Income tax expense — current (P&L)
   glDeferredExpense: '700200',  // Deferred tax expense (P&L)
@@ -269,7 +270,11 @@ function recompute() {
   const currentYearLoss = adjusted < 0 ? -adjusted : 0;
   const lossesCF = Math.max(0, lossesBF - lossOffset) + currentYearLoss;
 
-  const exemption = exemptionAmount(ciBeforeExempt);
+  // The exemption thresholds are statutory SGD amounts; the computation is in
+  // USD. Apply the exemption in SGD (convert CI up), then convert it back to USD.
+  const fx = num(settings.sgdRate) || 1;              // S$ per US$
+  const exemptionSGD = exemptionAmount(ciBeforeExempt * fx);
+  const exemption = exemptionSGD / fx;                // exemption in USD
   const chargeableIncome = Math.max(0, ciBeforeExempt - exemption);
 
   const grossTax = chargeableIncome * r;
@@ -299,7 +304,7 @@ function recompute() {
     r, pbt, addPerm, addTemp, dedPerm, dedTemp,
     addPermTotal, addTempTotal, dedPermTotal, dedTempTotal, addTotal, dedTotal,
     adjusted, lossesBF, lossOffset, ciBeforeExempt, currentYearLoss, lossesCF,
-    exemption, chargeableIncome, grossTax, rebate, netTaxOnProfit, ftc, currentTax,
+    exemption, exemptionSGD, fx, chargeableIncome, grossTax, rebate, netTaxOnProfit, ftc, currentTax,
     openingTD, closingTD, openingDT, closingDT, deferredCharge,
     priorAdj, currentTaxExpense, totalTaxExpense, etr, closingPayable,
   };
@@ -662,7 +667,7 @@ function renderCurrent(P) {
         <td colspan="2"></td></tr>
     <tr><td class="label indent">Utilised against this year's income</td><td class="num" id="c-lossoffset">${acc(-P.lossOffset)}</td><td colspan="2"></td></tr>
     <tr class="subtotal"><td class="label">Chargeable income before exemption</td><td class="num" id="c-ci-before">${fmt(P.ciBeforeExempt)}</td><td colspan="2"></td></tr>
-    <tr><td class="label indent">Less: ${esc(exemptionLabel())}</td><td class="num" id="c-exemption">${acc(-P.exemption)}</td><td colspan="2"></td></tr>
+    <tr><td class="label indent">Less: ${esc(exemptionLabel())} <span class="hint-text">(S$${money(P.exemptionSGD)} ÷ ${P.fx})</span></td><td class="num" id="c-exemption" title="${exact(P.exemption)}">${acc(-P.exemption)}</td><td colspan="2"></td></tr>
     <tr class="grand"><td class="label">Chargeable income</td><td class="num" id="c-ci">${fmt(P.chargeableIncome)}</td><td colspan="2"></td></tr>
 
     <tr class="section"><td colspan="4">Tax</td></tr>
@@ -910,6 +915,7 @@ function renderData() {
   $('#s-glDeferredBalance').value = settings.glDeferredBalance;
   $('#s-glBank').value = settings.glBank;
   if ($('#s-capRate')) $('#s-capRate').value = settings.capRate;
+  if ($('#s-sgdRate')) $('#s-sgdRate').value = settings.sgdRate;
   if ($('#s-remunCodes')) $('#s-remunCodes').value = settings.remunCodes;
 
   const f = provision.far;
@@ -1269,6 +1275,7 @@ function wire() {
     settings.glDeferredBalance = $('#s-glDeferredBalance').value.trim();
     settings.glBank = $('#s-glBank').value.trim();
     if ($('#s-capRate')) settings.capRate = num($('#s-capRate').value);
+    if ($('#s-sgdRate')) settings.sgdRate = num($('#s-sgdRate').value) || 1.2854;
     if ($('#s-remunCodes')) settings.remunCodes = $('#s-remunCodes').value.trim();
     saveSettings(); renderAll(); toast('Settings saved');
   });
