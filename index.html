@@ -22,6 +22,7 @@
   <nav class="tabs" role="tablist">
     <button class="tab active" data-tab="dashboard">Dashboard</button>
     <button class="tab" data-tab="tb">Trial Balance</button>
+    <button class="tab" data-tab="audit">Audit Adjustments</button>
     <button class="tab" data-tab="current">Current Tax</button>
     <button class="tab" data-tab="deferred">Deferred Tax</button>
     <button class="tab" data-tab="recon">Tax Reconciliation</button>
@@ -54,8 +55,9 @@
     <!-- Trial balance -->
     <section class="view" id="view-tb">
       <div class="view-head">
-        <div><h2>Trial balance</h2><div class="desc">GL accounts and balances. Link add-backs and deductions to these accounts (in Current Tax) so amounts pull through automatically.</div></div>
+        <div><h2>Trial balance</h2><div class="desc">GL accounts sorted by number. Add-backs and deductions link to these accounts (in Current Tax) and pull the <em>adjusted</em> closing balance.</div></div>
         <div class="toolbar">
+          <input type="search" id="tb-search" placeholder="Filter account / name&hellip;">
           <button class="primary sm" id="btn-add-tb">+ Add account</button>
           <button id="btn-import-tb">Import CSV</button>
           <input type="file" id="tb-file" accept=".csv,text/csv" style="display:none">
@@ -64,12 +66,35 @@
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Account</th><th>Name</th><th class="num">Debit</th><th class="num">Credit</th><th></th></tr></thead>
+          <thead><tr>
+            <th>Account</th><th>Name</th>
+            <th class="num">Opening</th><th class="num">Debit</th><th class="num">Credit</th><th class="num">Closing</th>
+            <th class="num">Audit adj.</th><th class="num">Adjusted</th><th></th>
+          </tr></thead>
           <tbody id="tb-body"></tbody>
           <tfoot id="tb-foot"></tfoot>
         </table>
       </div>
       <p class="legend" id="tb-note"></p>
+    </section>
+
+    <!-- Audit adjustments -->
+    <section class="view" id="view-audit">
+      <div class="view-head">
+        <div><h2>Audit adjustments</h2><div class="desc">Post debits/credits to trial-balance accounts. Each account's net adjustment shows on the Trial Balance and flows into any linked computation line.</div></div>
+        <div class="toolbar">
+          <button class="primary sm" id="btn-add-audit">+ Add adjustment</button>
+          <button id="exp-audit">Export CSV</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Account</th><th>Description</th><th class="num">Debit</th><th class="num">Credit</th><th></th></tr></thead>
+          <tbody id="audit-body"></tbody>
+          <tfoot id="audit-foot"></tfoot>
+        </table>
+      </div>
+      <p class="legend" id="audit-note"></p>
     </section>
 
     <!-- Current tax -->
@@ -222,7 +247,8 @@
 
   <div class="toast" id="toast"></div>
   <script src="far-import.js?v=1"></script>
-  <script src="sample-data.js?v=2"></script>
-  <script src="app.js?v=3"></script>
+  <script src="tb-aus155.js?v=1"></script>
+  <script src="sample-data.js?v=3"></script>
+  <script src="app.js?v=4"></script>
 </body>
 </html>
