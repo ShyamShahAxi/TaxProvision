@@ -35,6 +35,7 @@ const defaultSettings = {
   glDeferredExpense: '700200',  // Deferred tax expense (P&L)
   glTaxPayable: '260100',       // Provision for income tax (balance sheet)
   glDeferredBalance: '240100',  // Deferred tax liability / (asset) (balance sheet)
+  glReval: '400300',            // Revaluation (FX) — balancing account for the current-tax reconciliation
   glBank: '100100',             // Bank / cash (for tax paid)
 };
 
@@ -52,6 +53,7 @@ const emptyProvision = () => ({
   openingCurrentTaxPayable: 0,
   priorYearAdjustment: 0,   // (over)/under provision — under = positive
   priorYearProvisionCarried: 0, // FY-prior net tax provision still outstanding (b/f)
+  priorTaxByAccount: {},    // FY25 (prior year) expected closing by current-tax account code
   taxPaid: 0,
   far: null,                // {companyName,reportingDate,priorDate,importedAt,closing,opening}
 });
@@ -174,16 +176,13 @@ function currentTaxPayableTB(which) {
   return -net; // TB net asset (debit +) → negative payable
 }
 function hasCurrentTaxTB() { const tm = tbMap(); return currentTaxAccounts().some(c => tm[c]); }
-/* Reconciliation of the current-tax journal:
-   balance per TB + stat-adjustment journals − expected closing = journal to post. */
-function currentTaxReconciliation(P) {
-  const tm = tbMap(), am = auditMap();
-  const codes = currentTaxAccounts();
-  const tbRaw = -codes.reduce((s, c) => { const r = tm[c]; return r ? s + num(r.closing) : s; }, 0);  // payable, per TB (pre-stat)
-  const statAdj = -codes.reduce((s, c) => s + (am[c] || 0), 0);                                        // stat adjustment effect (payable)
-  const expected = P.currentTax + num(provision.priorYearProvisionCarried || 0) + P.priorAdj;          // expected closing payable
-  return { tbRaw, statAdj, expected, journal: tbRaw + statAdj - expected };
-}
+/* Expected closing per current-tax account (TB/ledger sign, debit +), split by
+   year: FY26 is the current-year charge (a credit to the provision account),
+   FY25 is the prior-year provision still on the balance sheet (return open). */
+function fy26TaxByAccount(code, P) { return code === (settings.glTaxPayable || '260100') ? -P.currentTax : 0; }
+function fy25TaxByAccount(code) { const m = provision.priorTaxByAccount || {}; return num(m[code] || 0); }
+function expectedTaxByAccount(code, P) { return fy26TaxByAccount(code, P) + fy25TaxByAccount(code); }
+function afterStatByAccount(code, tm, am) { const r = (tm || tbMap())[code]; return (r ? num(r.closing) : 0) + ((am || auditMap())[code] || 0); }
 
 /* Profit before tax per the trial balance (adjusted closing balances of P&L
    accounts 4/5/6/7). Income carries a credit closing and expenses/tax a debit,
@@ -875,32 +874,30 @@ function buildJournals(P) {
   const cr = (account, name, amt) => ({ account, name, dr: 0, cr: amt });
   const js = [];
 
-  if (Math.abs(P.currentTax) > 0.005) {
-    js.push({ ref: 'TAX-1', narrative: 'Current year income tax provision — YA ' + s.ya, lines: [
+  // Current tax — reconcile the ledger (+ stat adjustments) to the expected
+  // closing, posting to the real tax accounts; the residual (FX reval) balances
+  // to the revaluation account.
+  if (hasCurrentTaxTB()) {
+    const tm = tbMap(), am = auditMap();
+    const lines = []; let net = 0;
+    currentTaxAccounts().forEach(c => {
+      const r = tm[c]; const j = expectedTaxByAccount(c, P) - afterStatByAccount(c, tm, am); // posting to reach expected
+      if (Math.abs(j) > 0.005) { lines.push(j > 0 ? dr(c, r ? r.name : '', j) : cr(c, r ? r.name : '', -j)); net += j; }
+    });
+    if (Math.abs(net) > 0.005) lines.push(net < 0 ? dr(s.glReval, 'Revaluation (stat adjustment)', -net) : cr(s.glReval, 'Revaluation (stat adjustment)', net));
+    if (lines.length) js.push({ ref: 'CT-1', narrative: 'Current tax — reconcile ledger + stat adjustments to expected closing (YA ' + s.ya + ')', lines });
+  } else if (Math.abs(P.currentTax) > 0.005) {
+    js.push({ ref: 'CT-1', narrative: 'Current year income tax provision — YA ' + s.ya, lines: [
       dr(s.glTaxExpense, 'Income tax expense — current', P.currentTax),
-      cr(s.glTaxPayable, 'Current tax payable', P.currentTax),
+      cr(s.glTaxPayable, 'Provision for income tax', P.currentTax),
     ] });
-  }
-  if (Math.abs(P.priorAdj) > 0.005) {
-    const a = Math.abs(P.priorAdj);
-    const under = P.priorAdj > 0; // under-provision => additional expense
-    js.push({ ref: 'TAX-2', narrative: (under ? 'Under' : 'Over') + '-provision of tax in respect of prior years', lines: under
-      ? [dr(s.glTaxExpense, 'Income tax expense — prior year', a), cr(s.glTaxPayable, 'Current tax payable', a)]
-      : [dr(s.glTaxPayable, 'Current tax payable', a), cr(s.glTaxExpense, 'Income tax expense — prior year', a)] });
   }
   if (Math.abs(P.deferredCharge) > 0.005) {
     const a = Math.abs(P.deferredCharge);
     const charge = P.deferredCharge > 0; // increase in net deferred tax liability
-    js.push({ ref: 'TAX-3', narrative: 'Deferred tax ' + (charge ? 'charge' : 'credit') + ' — origination/reversal of temporary differences', lines: charge
+    js.push({ ref: 'DT-1', narrative: 'Deferred tax ' + (charge ? 'charge' : 'credit') + ' — origination/reversal of temporary differences', lines: charge
       ? [dr(s.glDeferredExpense, 'Deferred tax expense', a), cr(s.glDeferredBalance, 'Deferred tax liability/(asset)', a)]
       : [dr(s.glDeferredBalance, 'Deferred tax liability/(asset)', a), cr(s.glDeferredExpense, 'Deferred tax expense', a)] });
-  }
-  if (Math.abs(num(provision.taxPaid)) > 0.005) {
-    const a = num(provision.taxPaid);
-    js.push({ ref: 'TAX-4', narrative: 'Income tax paid during the year', lines: [
-      dr(s.glTaxPayable, 'Current tax payable', a),
-      cr(s.glBank, 'Bank / cash', a),
-    ] });
   }
   return js;
 }
@@ -910,26 +907,25 @@ function renderJournals(P) {
   if (hasCurrentTaxTB()) {
     const tm = tbMap(), am = auditMap();
     const codes = currentTaxAccounts();
-    let totTB = 0, totStat = 0;
-    const rows = codes.map(c => { const r = tm[c]; const tb = r ? num(r.closing) : 0, st = am[c] || 0; totTB += tb; totStat += st; return { c, name: r ? r.name : '—', tb, st }; });
-    const totAfter = totTB + totStat;                       // net balance per ledger (debit +), after stat
-    const expectedPayable = P.currentTax + num(provision.priorYearProvisionCarried || 0) + P.priorAdj;
-    const expectedBalance = -expectedPayable;               // expected as a TB balance (payable = credit = negative)
-    const journal = totAfter - expectedBalance;             // reconciling movement (mostly FX revaluation)
+    let tFY26 = 0, tFY25 = 0, tExp = 0, tTB = 0, tStat = 0, tAfter = 0, tJ = 0;
+    const rows = codes.map(c => {
+      const r = tm[c], fy26 = fy26TaxByAccount(c, P), fy25 = fy25TaxByAccount(c), exp = fy26 + fy25;
+      const tb = r ? num(r.closing) : 0, st = am[c] || 0, after = tb + st, j = exp - after;
+      tFY26 += fy26; tFY25 += fy25; tExp += exp; tTB += tb; tStat += st; tAfter += after; tJ += j;
+      return { c, name: r ? r.name : '—', fy26, fy25, exp, tb, st, after, j };
+    });
     recCard = `<div class="card">
-      <h3 style="margin:0 0 2px">Current tax — reconciliation to journal</h3>
-      <div class="note-sub" style="color:var(--muted);font-size:0.82rem;margin-bottom:10px">Balances per TB + stat-adjustment journals, by account, versus the expected closing. Shown in ledger sign — a credit (payable) is in parentheses.</div>
+      <h3 style="margin:0 0 2px">Current tax — expected closing &amp; reconciliation</h3>
+      <div class="note-sub" style="color:var(--muted);font-size:0.82rem;margin-bottom:10px">Expected closing by account, split FY25 (prior year, return open) / FY26 (current year), reconciled to the ledger. Ledger sign — a payable (credit) is in parentheses.</div>
       <div class="table-wrap"><table>
-        <thead><tr><th>Account</th><th>Name</th><th class="num">Per TB</th><th class="num">Stat adj</th><th class="num">After stat</th></tr></thead>
-        <tbody>${rows.map(x => `<tr><td class="tb-code">${esc(x.c)}</td><td>${esc(x.name)}</td><td class="num" title="${exact(x.tb)}">${acc(x.tb)}</td><td class="num" title="${exact(x.st)}">${acc(x.st)}</td><td class="num" title="${exact(x.tb + x.st)}">${acc(x.tb + x.st)}</td></tr>`).join('')}</tbody>
-        <tfoot><tr><td colspan="2">Total</td><td class="num">${acc(totTB)}</td><td class="num">${acc(totStat)}</td><td class="num">${acc(totAfter)}</td></tr></tfoot>
+        <thead><tr><th>Account</th><th>Name</th><th class="num">FY26</th><th class="num">FY25</th><th class="num">Expected</th><th class="num">Per TB</th><th class="num">Stat adj</th><th class="num">After stat</th><th class="num">Journal</th></tr></thead>
+        <tbody>${rows.map(x => `<tr><td class="tb-code">${esc(x.c)}</td><td class="tb-name" title="${attr(x.name)}">${esc(x.name)}</td>
+          <td class="num" title="${exact(x.fy26)}">${acc(x.fy26)}</td><td class="num" title="${exact(x.fy25)}">${acc(x.fy25)}</td><td class="num" title="${exact(x.exp)}">${acc(x.exp)}</td>
+          <td class="num" title="${exact(x.tb)}">${acc(x.tb)}</td><td class="num" title="${exact(x.st)}">${acc(x.st)}</td><td class="num" title="${exact(x.after)}">${acc(x.after)}</td>
+          <td class="num" title="${exact(x.j)}">${acc(x.j)}</td></tr>`).join('')}</tbody>
+        <tfoot><tr><td colspan="2">Total</td><td class="num">${acc(tFY26)}</td><td class="num">${acc(tFY25)}</td><td class="num">${acc(tExp)}</td><td class="num">${acc(tTB)}</td><td class="num">${acc(tStat)}</td><td class="num">${acc(tAfter)}</td><td class="num">${acc(tJ)}</td></tr></tfoot>
       </table></div>
-      <div class="table-wrap" style="margin-top:12px"><table class="comp-table"><tbody>
-        <tr><td class="label">Balance per TB after stat adjustments (net)</td><td class="num" title="${exact(totAfter)}">${acc(totAfter)}</td></tr>
-        <tr><td class="label">Less: expected closing current tax provision</td><td class="num" title="${exact(expectedBalance)}">${acc(expectedBalance)}</td></tr>
-        <tr class="grand"><td class="label">Reconciling journal (FX revaluation → reval)</td><td class="num" title="${exact(journal)}">${acc(journal)}</td></tr>
-      </tbody></table></div>
-      <p class="legend">The reconciling journal is essentially the FX revaluation, which posts to the reval account (part of the stat adjustment). To split it precisely by account I'd need the expected closing per account (from your D. Proof) — say the word and I'll add those inputs.</p>
+      <p class="legend">FY26 = current-year charge (${fmt(P.currentTax)}, to ${esc(settings.glTaxPayable)}); FY25 = prior-year provision still on the balance sheet (return open). Journal = expected − (per TB + stat); the net residual (FX revaluation) balances to ${esc(settings.glReval)}. Edit the FY25 figures in the proof if needed.</p>
     </div>`;
   }
   const js = buildJournals(P);
@@ -1018,6 +1014,7 @@ function renderData() {
   $('#s-glDeferredExpense').value = settings.glDeferredExpense;
   $('#s-glTaxPayable').value = settings.glTaxPayable;
   $('#s-glDeferredBalance').value = settings.glDeferredBalance;
+  if ($('#s-glReval')) $('#s-glReval').value = settings.glReval;
   $('#s-glBank').value = settings.glBank;
   if ($('#s-capRate')) $('#s-capRate').value = settings.capRate;
   if ($('#s-sgdRate')) $('#s-sgdRate').value = settings.sgdRate;
@@ -1379,6 +1376,7 @@ function wire() {
     settings.glDeferredExpense = $('#s-glDeferredExpense').value.trim();
     settings.glTaxPayable = $('#s-glTaxPayable').value.trim();
     settings.glDeferredBalance = $('#s-glDeferredBalance').value.trim();
+    if ($('#s-glReval')) settings.glReval = $('#s-glReval').value.trim();
     settings.glBank = $('#s-glBank').value.trim();
     if ($('#s-capRate')) settings.capRate = num($('#s-capRate').value);
     if ($('#s-sgdRate')) settings.sgdRate = num($('#s-sgdRate').value) || 1.2854;
@@ -1468,10 +1466,11 @@ function restoreSampleLines() {
   s.deferredItems.forEach(x => { if (!haveDef.has(x.label)) provision.deferredItems.push(x); });
   if (!provision.tb.length && s.tb.length) provision.tb = s.tb;
   if (provision.priorYearProvisionCarried == null) provision.priorYearProvisionCarried = s.priorYearProvisionCarried || 0;
+  if (!provision.priorTaxByAccount || !Object.keys(provision.priorTaxByAccount).length) provision.priorTaxByAccount = s.priorTaxByAccount || {};
   saveProvision();
 }
 if (settings.glTaxPayable === '250650') { settings.glTaxPayable = '260100'; saveSettings(); } // fix old placeholder code
-const HEAL_KEY = 'taxprov.heal.v5';
+const HEAL_KEY = 'taxprov.heal.v6';
 if (localStorage.getItem(INIT_KEY) && !localStorage.getItem(HEAL_KEY)) {
   restoreSampleLines();  // existing sessions: top up standard lines lost to earlier ✕ deletes
 }

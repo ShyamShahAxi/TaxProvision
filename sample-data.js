@@ -92,6 +92,10 @@ function sampleProvision() {
     openingCurrentTaxPayable: 0,
     priorYearAdjustment: 0,
     priorYearProvisionCarried: 30004, // FY25 net tax provision still outstanding (return not closed)
+    // FY25 (prior year) expected closing by account, per the D. Proof: provision
+    // for income tax 260100 (1,864,344 payable) and the ECI receivable 130200
+    // 1,834,340. FY26 (current year) charge posts to 260100 automatically.
+    priorTaxByAccount: { '260100': -1864344, '260200': 0, '130200': 1834340, '130100': 0 },
     taxPaid: 0,
     far: null,
   };
