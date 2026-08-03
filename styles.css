@@ -192,6 +192,11 @@ input.plain:hover { border-color: var(--line); background: #fff; }
 #tb-body input.amt { width: 100%; padding: 4px 6px; text-align: right; }
 #tb-body input.desc-in { width: 100%; padding: 4px 6px; }
 .zero { color: #cbd5e1; }
+.tb-pnl { display: flex; flex-wrap: wrap; gap: 12px; margin: 8px 0 12px; }
+.tb-pnl .pnl-item { flex: 1 1 200px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; box-shadow: var(--shadow); }
+.tb-pnl .pnl-item .lbl { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.tb-pnl .pnl-item .val { font-size: 1.15rem; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 2px; }
+.tb-pnl .pnl-item.accent { border-color: var(--brand); }
 #view-tb col.c-code { width: 78px; }
 #view-tb col.c-num { width: 104px; }
 #view-tb col.c-act { width: 30px; }
