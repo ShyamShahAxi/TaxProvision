@@ -429,15 +429,17 @@ function renderAudit() {
   const vis = provision.auditAdjustments.map((e, i) => ({ e, i })).filter(({ e }) => isVisible(e));
   const hidden = provision.auditAdjustments.length - vis.length;
   if (!provision.auditAdjustments.length) {
-    body.innerHTML = `<tr class="empty-row"><td colspan="5">No audit adjustments. Add one to post a debit/credit against a trial-balance account.</td></tr>`;
+    body.innerHTML = `<tr class="empty-row"><td colspan="6">No audit adjustments. Add one to post a debit/credit against a trial-balance account.</td></tr>`;
   } else if (!vis.length) {
-    body.innerHTML = `<tr class="empty-row"><td colspan="5">No adjustments for entity “${esc(settings.entity)}”. ${hidden} row(s) for other entities are hidden.</td></tr>`;
+    body.innerHTML = `<tr class="empty-row"><td colspan="6">No adjustments for entity “${esc(settings.entity)}”. ${hidden} row(s) for other entities are hidden.</td></tr>`;
   } else {
     body.innerHTML = vis.map(({ e, i }) => {
+      const entity = esc(e.entity || settings.entity);
       // Imported stat adjustments are read-only (managed by re-import); only
       // manually-added rows are editable.
       if (e.source === 'stat') {
         return `<tr data-line="auditAdjustments" data-idx="${i}">
+          <td class="tb-code">${entity}</td>
           <td class="tb-code">${esc(e.account)} <span class="hint-text">${esc(nameFor(e.account))}</span></td>
           <td>${esc(e.description)} <span class="src-tag">STAT</span></td>
           <td class="num" title="${exact(e.debit)}">${e.debit ? money(e.debit) : '<span class="zero">–</span>'}</td>
@@ -446,7 +448,8 @@ function renderAudit() {
         </tr>`;
       }
       return `<tr data-line="auditAdjustments" data-idx="${i}">
-        <td><select class="type-sel" data-key="account" style="min-width:220px">${tbOptions(e.account)}</select></td>
+        <td class="tb-code">${entity}</td>
+        <td><select class="type-sel" data-key="account" style="min-width:200px">${tbOptions(e.account)}</select></td>
         <td><input class="desc-in" data-key="description" value="${attr(e.description)}" placeholder="Reason for adjustment"></td>
         <td class="num"><input class="amt" type="number" step="0.01" data-key="debit" value="${e.debit}"></td>
         <td class="num"><input class="amt" type="number" step="0.01" data-key="credit" value="${e.credit}"></td>
@@ -455,7 +458,7 @@ function renderAudit() {
     }).join('');
   }
   const dr = vis.reduce((s, { e }) => s + num(e.debit), 0), cr = vis.reduce((s, { e }) => s + num(e.credit), 0);
-  $('#audit-foot').innerHTML = `<tr><td colspan="2">Total (${vis.length}${hidden ? `, ${hidden} hidden` : ''})</td><td class="num">${fmt(dr)}</td><td class="num">${fmt(cr)}</td><td></td></tr>`;
+  $('#audit-foot').innerHTML = `<tr><td colspan="3">Total (${vis.length}${hidden ? `, ${hidden} hidden` : ''})</td><td class="num">${fmt(dr)}</td><td class="num">${fmt(cr)}</td><td></td></tr>`;
   const diff = dr - cr;
   $('#audit-note').innerHTML =
     (Math.abs(diff) < 0.005 ? 'Audit adjustments balance (debits = credits).' : `Debits − credits = ${acc(diff)}. Audit journals should balance to nil before posting.`) +
@@ -489,7 +492,7 @@ function renderMedical() {
         <td>${esc(p.policy)}</td>
         <td><span class="pill ${p.type === 'Life' ? 'blue' : 'grey'}">${esc(p.type)}</span></td>
         <td class="num" title="${exact(p.amount)}">${fmt(p.amount)}</td>
-        <td class="act"><button class="ghost sm" data-act="del-line" title="Remove">&times;</button></td>
+        <td class="act"></td>
       </tr>`;
     }).join('');
   }
@@ -534,7 +537,7 @@ function lineRows(list, listName) {
         <td class="indent">${esc(x.label)} <span class="src-tag" title="${attr(x.account)}">${lineSourceTag(x)}</span></td>
         <td class="num" title="${exact(amt)}">${fmt(amt)}</td>
         <td class="num"><span class="hint-text">${x.type === 'temporary' ? 'Temporary' : 'Permanent'}</span></td>
-        <td class="act"><button class="ghost sm" data-act="del-line" title="Remove">&times;</button></td>
+        <td class="act"></td>
       </tr>`;
     }
     // Manual → editable, with a link dropdown to bind it to a TB account.
