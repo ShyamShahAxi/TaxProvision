@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Tax Provision</title>
   <meta name="description" content="Corporate tax provision — current tax computation, deferred tax, effective-rate reconciliation and disclosure notes. Runs entirely in your browser." />
-  <link rel="stylesheet" href="styles.css?v=2" />
+  <link rel="stylesheet" href="styles.css?v=3" />
 </head>
 <body>
   <header class="app-header">
@@ -65,6 +65,7 @@
           <button id="exp-tb">Export CSV</button>
         </div>
       </div>
+      <div id="tb-pnl-top" class="tb-pnl"></div>
       <div class="table-wrap">
         <table>
           <colgroup>
@@ -79,6 +80,7 @@
           <tfoot id="tb-foot"></tfoot>
         </table>
       </div>
+      <div id="tb-pnl-bottom" class="tb-pnl"></div>
       <p class="legend" id="tb-note"></p>
     </section>
 
@@ -253,6 +255,6 @@
   <script src="far-import.js?v=1"></script>
   <script src="tb-aus155.js?v=1"></script>
   <script src="sample-data.js?v=3"></script>
-  <script src="app.js?v=5"></script>
+  <script src="app.js?v=6"></script>
 </body>
 </html>

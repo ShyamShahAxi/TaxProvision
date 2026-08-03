@@ -325,10 +325,31 @@ function renderTB() {
     <td colspan="2">Total (${provision.tb.length} accounts${q ? `, ${rows.length} shown` : ''})</td>
     <td class="num">${money(t('opening'))}</td><td class="num">${money(t('debit'))}</td><td class="num">${money(t('credit'))}</td>
     <td class="num">${money(closeTot)}</td><td class="num">${money(adjTot)}</td><td class="num">${money(closeTot + adjTot)}</td><td></td></tr>`;
-  const bal = Math.abs(closeTot + adjTot) < 1;
-  $('#tb-note').innerHTML = bal
-    ? 'Trial balance is in balance (adjusted closing balances net to nil).'
-    : `Adjusted closing balances net to ${acc(closeTot + adjTot)} — a complete trial balance should net to nil (small differences are source rounding).`;
+
+  // Profit per the trial balance (adjusted closing balances of P&L accounts 4/5/6/7).
+  // Income carries a credit (negative) closing and expenses/tax a debit (positive),
+  // so profit after tax = −Σ(P&L closing) and PBT = PAT + tax expense.
+  let plAll = 0, taxExp = 0, drBal = 0, crBal = 0;
+  provision.tb.forEach(a => {
+    const bal = num(a.closing) + (am[String(a.code)] || 0);
+    if (bal >= 0) drBal += bal; else crBal += -bal;
+    const c = String(a.code);
+    if (/^[4567]/.test(c)) { plAll += bal; if (/^7/.test(c)) taxExp += bal; }
+  });
+  const pat = -plAll, pbt = pat + taxExp;
+  const pnl = `
+    <div class="pnl-item accent"><div class="lbl">Profit before tax (per TB)</div><div class="val ${pbt < 0 ? 'neg' : ''}">${acc(pbt)}</div></div>
+    <div class="pnl-item"><div class="lbl">Tax expense (per TB)</div><div class="val">${acc(-taxExp)}</div></div>
+    <div class="pnl-item accent"><div class="lbl">Profit after tax (per TB)</div><div class="val ${pat < 0 ? 'neg' : ''}">${acc(pat)}</div></div>`;
+  $('#tb-pnl-top').innerHTML = pnl;
+  $('#tb-pnl-bottom').innerHTML = pnl;
+
+  const diff = drBal - crBal;
+  const balanced = Math.abs(diff) < 100;
+  $('#tb-note').innerHTML =
+    `Total debit balances ${money(drBal)} · total credit balances ${money(crBal)} · ` +
+    (balanced ? `in balance (difference ${money(diff)} is source rounding).` : `<span class="neg">out of balance by ${money(diff)}.</span>`) +
+    ` &nbsp;PBT per the trial balance is the raw accounting result; the Current Tax computation uses statutory PBT of ${fmt(provision.profitBeforeTax)} — the difference is the transfer-pricing / non-TCG consolidation adjustments.`;
 }
 
 /* ----- Audit adjustments ----- */
