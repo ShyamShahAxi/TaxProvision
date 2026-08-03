@@ -22,6 +22,11 @@ const defaultSettings = {
   exemption: 'partial',     // 'partial' | 'startup' | 'none'
   rebatePct: 0,             // corporate income tax rebate %
   rebateCap: 0,             // rebate cap (0 = no cap)
+  // Medical expense capping (Singapore): deductible medical is capped at
+  // capRate% of total employee remuneration (1%, or 2% with portable benefits).
+  capRate: 1,
+  medicalCode: '600550',   // staff medical GL account
+  remunCodes: '600100,600110,600140,600150,510100,600180,600210,600305,600310',
   // GL accounts for the provision journals (editable — defaults match the AUS155 workpaper where known)
   glTaxExpense: '700100',       // Income tax expense — current (P&L)
   glDeferredExpense: '700200',  // Deferred tax expense (P&L)
@@ -35,6 +40,7 @@ const emptyProvision = () => ({
   profitBeforeTax: 0,
   tb: [],                   // trial balance: {id,code,name,opening,debit,credit,closing}
   auditAdjustments: [],     // {id,account,description,debit,credit}
+  insurancePremiums: [],    // {id,policy,type:'Life'|'Medical',amount} (USD)
   addBacks: [],             // {id,label,amount,type:'permanent'|'temporary',source,account}
   deductions: [],           // {id,label,amount,type,source,account}
   lossesBroughtForward: 0,
@@ -123,10 +129,47 @@ function adjustedClosing(code, tm, am) {
   const adj = (am || auditMap())[String(code)] || 0;
   return base + adj;
 }
-/* Effective amount of an add-back/deduction: pulled from the TB (adjusted
-   closing balance) when linked, otherwise the manually entered amount. Sign is
-   set by the section it sits in, so we take the magnitude of the balance. */
-function lineAmt(x, tm, am) { return x.account ? Math.abs(adjustedClosing(x.account, tm, am)) : num(x.amount); }
+/* ---------- Medical expense capping & insurance ---------- */
+function premiumSum(type) { return provision.insurancePremiums.reduce((s, p) => p.type === type ? s + num(p.amount) : s, 0); }
+function lifeInsuranceTotal() { return premiumSum('Life'); }
+function medicalInsuranceTotal() { return premiumSum('Medical'); }
+function staffMedical() { const tm = tbMap(); return Math.abs(adjustedClosing(settings.medicalCode, tm, auditMap())); }
+function medicalExpensesTotal() { return staffMedical() + medicalInsuranceTotal(); }
+function remunerationTotal() {
+  const tm = tbMap(), am = auditMap();
+  return (settings.remunCodes || '').split(',').map(s => s.trim()).filter(Boolean)
+    .reduce((t, c) => { const r = tm[c]; return r ? t + num(r.closing) + (am[c] || 0) : t; }, 0);
+}
+function medicalCap() { return remunerationTotal() * (num(settings.capRate) / 100); }
+function medicalAddback() { return Math.max(0, medicalExpensesTotal() - medicalCap()); }
+
+/* Computed link sources for add-backs/deductions (account values starting @). */
+function computedSources() {
+  return {
+    '@medical.life': lifeInsuranceTotal(),
+    '@medical.addback': medicalAddback(),
+  };
+}
+
+/* Effective amount of an add-back/deduction. The `account` field selects a
+   source: a computed value (@…), a specific TB column (CODE#opening|debit|credit),
+   the adjusted TB closing (CODE), or — when blank — the manual amount. Magnitude
+   only; the section (add-back vs deduction) sets the sign. */
+function lineAmt(x, tm, am) {
+  const a = x.account;
+  if (!a) return num(x.amount);
+  if (a[0] === '@') { const v = computedSources()[a]; return v == null ? 0 : Math.abs(v); }
+  const hash = a.indexOf('#');
+  if (hash >= 0) { const row = (tm || tbMap())[a.slice(0, hash)]; return row ? Math.abs(num(row[a.slice(hash + 1)])) : 0; }
+  return Math.abs(adjustedClosing(a, tm, am));
+}
+/* Human label for a line's source, for the read-only tag. */
+function lineSourceTag(x) {
+  if (!x.account) return '';
+  if (x.account.startsWith('@medical')) return 'MED';
+  if (x.account.startsWith('FAR:')) return 'FAR';
+  return 'TB';
+}
 
 /* Singapore tax exemption on chargeable income. */
 function exemptionAmount(ci) {
@@ -219,6 +262,7 @@ function render() {
   if (activeTab === 'dashboard') renderDashboard(P);
   else if (activeTab === 'tb') renderTB();
   else if (activeTab === 'audit') renderAudit();
+  else if (activeTab === 'medical') renderMedical();
   else if (activeTab === 'current') renderCurrent(P);
   else if (activeTab === 'deferred') renderDeferred(P);
   else if (activeTab === 'recon') renderRecon(P);
@@ -397,23 +441,70 @@ function tbOptions(selected) {
   return opts.join('');
 }
 
+/* ----- Medical expenses & insurance ----- */
+function renderMedical() {
+  const body = $('#prem-body');
+  if (!provision.insurancePremiums.length) {
+    body.innerHTML = `<tr class="empty-row"><td colspan="4">No premiums attached. Use “Attach insurance premiums” to import the breakdown, or add rows.</td></tr>`;
+  } else {
+    body.innerHTML = provision.insurancePremiums.map((p, i) => `<tr data-line="insurancePremiums" data-idx="${i}">
+      <td><input class="desc-in" data-key="policy" value="${attr(p.policy)}" placeholder="Policy"></td>
+      <td><select class="type-sel" data-key="type"><option${p.type === 'Life' ? ' selected' : ''}>Life</option><option${p.type === 'Medical' ? ' selected' : ''}>Medical</option></select></td>
+      <td class="num"><input class="amt" type="number" step="0.01" data-key="amount" value="${p.amount}"></td>
+      <td class="act"><button class="ghost sm" data-act="del-line" title="Remove">&times;</button></td>
+    </tr>`).join('');
+  }
+  const life = lifeInsuranceTotal(), med = medicalInsuranceTotal();
+  $('#prem-foot').innerHTML = `<tr><td>Total (${provision.insurancePremiums.length})</td>
+    <td class="num">Life ${fmt(life)}</td><td class="num" title="Medical ${exact(med)}">Medical ${fmt(med)}</td><td></td></tr>`;
+
+  const sm = staffMedical(), A = medicalExpensesTotal(), rem = remunerationTotal(), B = medicalCap(), add = medicalAddback();
+  $('#medical-calc').innerHTML = `<table class="comp-table"><tbody>
+    <tr class="section"><td colspan="2">Medical expenses</td></tr>
+    <tr><td class="label">Staff medical (${esc(settings.medicalCode)})</td><td class="num" title="${exact(sm)}">${fmt(sm)}</td></tr>
+    <tr><td class="label">Medical insurance premiums</td><td class="num" title="${exact(med)}">${fmt(med)}</td></tr>
+    <tr class="subtotal"><td class="label">Total medical expenses (A)</td><td class="num" title="${exact(A)}">${fmt(A)}</td></tr>
+    <tr class="section"><td colspan="2">Cap — ${pct(settings.capRate)} of employee remuneration</td></tr>
+    <tr><td class="label">Total employee remuneration</td><td class="num" title="${exact(rem)}">${fmt(rem)}</td></tr>
+    <tr class="subtotal"><td class="label">Cap at ${pct(settings.capRate)} (B)</td><td class="num" title="${exact(B)}">${fmt(B)}</td></tr>
+    <tr class="grand"><td class="label">Medical add-back — excess A − B (restricted)</td><td class="num" title="${exact(add)}">${fmt(add)}</td></tr>
+  </tbody></table>
+  <p class="legend">Deductible medical is limited to ${pct(settings.capRate)} of employee remuneration; the excess (${fmt(add)}) is added back as a permanent difference in Current Tax. Set the rate to 2% if portable medical benefits apply.</p>`;
+
+  $('#life-calc').innerHTML = `<table class="comp-table"><tbody>
+    <tr class="grand"><td class="label">Non-deductible life insurance premiums</td><td class="num" title="${exact(life)}">${fmt(life)}</td></tr>
+  </tbody></table>
+  <p class="legend">Group life insurance premiums are not deductible and are added back in full as a permanent difference.</p>`;
+
+  const codes = (settings.remunCodes || '').split(',').map(s => s.trim()).filter(Boolean);
+  const tm = tbMap(), am = auditMap();
+  $('#remun-detail').innerHTML = `<div class="table-wrap"><table><thead><tr><th>Account</th><th>Name</th><th class="num">Amount</th></tr></thead><tbody>${
+    codes.map(c => { const r = tm[c]; const v = r ? num(r.closing) + (am[c] || 0) : 0; return `<tr><td class="tb-code">${esc(c)}</td><td>${esc(r ? r.name : '—')}</td><td class="num" title="${exact(v)}">${money(v)}</td></tr>`; }).join('')
+  }</tbody><tfoot><tr><td colspan="2">Total employee remuneration</td><td class="num" title="${exact(rem)}">${money(rem)}</td></tr></tfoot></table></div>`;
+}
+
 /* ----- Current tax computation ----- */
 function lineRows(list, listName) {
   if (!list.length) return `<tr><td class="indent" colspan="4"><span class="hint-text">No items.</span></td></tr>`;
   const map = tbMap(), am = auditMap();
   return list.map((x, i) => {
-    const linked = !!x.account;
-    const missing = linked && !map[String(x.account)];
-    const linkedAmt = Math.abs(adjustedClosing(x.account, map, am));
-    const amtCell = linked
-      ? `<span class="note-num" title="${exact(linkedAmt)}">${fmt(linkedAmt)}</span> <span class="src-tag">TB</span>`
-      : `<input class="amt" type="number" step="0.01" data-key="amount" value="${x.amount}">`;
+    const amt = lineAmt(x, map, am);
+    if (x.account) {
+      // Linked / computed → fully non-editable (label, amount and type locked).
+      return `<tr data-line="${listName}" data-idx="${i}">
+        <td class="indent">${esc(x.label)} <span class="src-tag" title="${attr(x.account)}">${lineSourceTag(x)}</span></td>
+        <td class="num" title="${exact(amt)}">${fmt(amt)}</td>
+        <td class="num"><span class="hint-text">${x.type === 'temporary' ? 'Temporary' : 'Permanent'}</span></td>
+        <td class="act"><button class="ghost sm" data-act="del-line" title="Remove">&times;</button></td>
+      </tr>`;
+    }
+    // Manual → editable, with a link dropdown to bind it to a TB account.
     return `<tr data-line="${listName}" data-idx="${i}">
       <td class="indent">
-        <input class="desc-in" data-key="label" value="${attr(x.label)}" placeholder="Description">${x.source === 'far' ? '<span class="src-tag">FAR</span>' : ''}
-        <div style="margin-top:4px;display:flex;align-items:center;gap:6px"><span class="hint-text">Link:</span><select data-key="account" class="type-sel" style="font-size:0.74rem">${tbOptions(x.account)}</select>${missing ? '<span class="src-tag" style="background:var(--red-bg);color:var(--red)">code not in TB</span>' : ''}</div>
+        <input class="desc-in" data-key="label" value="${attr(x.label)}" placeholder="Description">
+        <div style="margin-top:4px;display:flex;align-items:center;gap:6px"><span class="hint-text">Link:</span><select data-key="account" class="type-sel" style="font-size:0.74rem">${tbOptions(x.account)}</select></div>
       </td>
-      <td class="num">${amtCell}</td>
+      <td class="num"><input class="amt" type="number" step="0.01" data-key="amount" value="${x.amount}"></td>
       <td class="num"><select data-key="type" class="type-sel">
         <option value="permanent"${x.type !== 'temporary' ? ' selected' : ''}>Permanent</option>
         <option value="temporary"${x.type === 'temporary' ? ' selected' : ''}>Temporary</option>
@@ -686,6 +777,8 @@ function renderData() {
   $('#s-glTaxPayable').value = settings.glTaxPayable;
   $('#s-glDeferredBalance').value = settings.glDeferredBalance;
   $('#s-glBank').value = settings.glBank;
+  if ($('#s-capRate')) $('#s-capRate').value = settings.capRate;
+  if ($('#s-remunCodes')) $('#s-remunCodes').value = settings.remunCodes;
 
   const f = provision.far;
   $('#far-status').innerHTML = f
@@ -824,6 +917,28 @@ function importStatCsv(rows) {
   toast(`${added.length} stat adjustments imported for ${entity}` + (Math.abs(dr - cr) < 0.5 ? '' : ' (⚠ Dr≠Cr)'));
 }
 
+/* Attach an insurance-premium breakdown. Each row: a policy label, a type cell
+   containing "Life" or "Medical", and a numeric amount (the last numeric column
+   is taken as the USD figure). Subtotal/header rows without a type are skipped. */
+function importPremiumsCsv(rows) {
+  const out = [];
+  for (const r of rows) {
+    if (!r || !r.length) continue;
+    const typeCell = r.find(c => /^\s*(life|medical)\s*$/i.test(String(c)));
+    if (!typeCell) continue;
+    const type = /life/i.test(typeCell) ? 'Life' : 'Medical';
+    const policy = String(r[0] || '').trim();
+    let amt = 0;
+    for (let i = r.length - 1; i >= 0; i--) { if (looksNumeric(r[i])) { amt = cleanNum(r[i]); break; } }
+    if (Math.abs(amt) < 0.005) continue;
+    out.push({ id: uid(), policy, type, amount: round2(amt) });
+  }
+  if (!out.length) { toast('No premium rows found (need a Life/Medical column)'); return; }
+  provision.insurancePremiums = out;
+  saveProvision(); renderAll();
+  toast(`${out.length} premiums attached — Life ${fmt(premiumSum('Life'))}, Medical ${fmt(premiumSum('Medical'))}`);
+}
+
 function exportAuditCsv() {
   const tm = tbMap();
   const rows = [['Account', 'Account name', 'Description', 'Debit', 'Credit']];
@@ -895,7 +1010,7 @@ function onFieldInput(e) {
     const item = list[+row.dataset.idx];
     if (!item) return;
     const key = t.dataset.key;
-    const stringKey = key === 'label' || key === 'type' || key === 'code' || key === 'name' || key === 'account' || key === 'description';
+    const stringKey = key === 'label' || key === 'type' || key === 'code' || key === 'name' || key === 'account' || key === 'description' || key === 'policy';
     item[key] = stringKey ? t.value : (t.value === '' ? 0 : num(t.value));
     saveProvision();
     // 'type' and 'account' change layout/derived amounts — need a full re-render.
@@ -969,6 +1084,24 @@ function wire() {
   });
   $('#exp-audit').addEventListener('click', exportAuditCsv);
 
+  // Medical — insurance premiums
+  $('#btn-add-prem').addEventListener('click', () => {
+    provision.insurancePremiums.push({ id: uid(), policy: '', type: 'Medical', amount: 0 });
+    saveProvision(); render();
+  });
+  $('#btn-attach-prem').addEventListener('click', () => $('#prem-file').click());
+  $('#prem-file').addEventListener('change', e => {
+    const file = e.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => { importPremiumsCsv(parseCsv(reader.result)); e.target.value = ''; };
+    reader.readAsText(file);
+  });
+  $('#btn-clear-prem').addEventListener('click', () => {
+    if (!provision.insurancePremiums.length) return;
+    if (!confirm('Clear all attached premiums?')) return;
+    provision.insurancePremiums = []; saveProvision(); renderAll(); toast('Premiums cleared');
+  });
+
   // Pull FAR data from the same browser (shared origin on the live site)
   $('#btn-far-browser').addEventListener('click', importFarFromBrowser);
 
@@ -987,6 +1120,8 @@ function wire() {
     settings.glTaxPayable = $('#s-glTaxPayable').value.trim();
     settings.glDeferredBalance = $('#s-glDeferredBalance').value.trim();
     settings.glBank = $('#s-glBank').value.trim();
+    if ($('#s-capRate')) settings.capRate = num($('#s-capRate').value);
+    if ($('#s-remunCodes')) settings.remunCodes = $('#s-remunCodes').value.trim();
     saveSettings(); renderAll(); toast('Settings saved');
   });
 
@@ -1037,7 +1172,7 @@ function readJson(e, cb) {
    On the very first visit (nothing saved yet) seed the AUS155 sample so the
    app opens with data instead of a blank statement. The init marker means an
    explicit "Clear all data" stays cleared and we never overwrite real work. */
-const INIT_KEY = 'taxprov.init.v4';
+const INIT_KEY = 'taxprov.init.v5';
 if (!localStorage.getItem(INIT_KEY)) {
   loadSample();
   saveSettings();

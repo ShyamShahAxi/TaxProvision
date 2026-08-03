@@ -23,6 +23,7 @@
     <button class="tab active" data-tab="dashboard">Dashboard</button>
     <button class="tab" data-tab="tb">Trial Balance</button>
     <button class="tab" data-tab="audit">Audit Adjustments</button>
+    <button class="tab" data-tab="medical">Medical</button>
     <button class="tab" data-tab="current">Current Tax</button>
     <button class="tab" data-tab="deferred">Deferred Tax</button>
     <button class="tab" data-tab="recon">Tax Reconciliation</button>
@@ -104,6 +105,36 @@
         </table>
       </div>
       <p class="legend" id="audit-note"></p>
+    </section>
+
+    <!-- Medical expenses & insurance -->
+    <section class="view" id="view-medical">
+      <div class="view-head">
+        <div><h2>Medical expenses &amp; insurance</h2><div class="desc">Deductible medical is capped at a % of employee remuneration; the excess and life-insurance premiums are non-deductible permanent add-backs.</div></div>
+      </div>
+      <div class="card">
+        <div class="view-head" style="margin-bottom:12px">
+          <div><h3 style="margin:0">Insurance premiums</h3><div class="desc">Attach the premium breakdown; each policy is classified Life or Medical.</div></div>
+          <div class="toolbar">
+            <button class="primary sm" id="btn-attach-prem">Attach insurance premiums</button>
+            <input type="file" id="prem-file" accept=".csv,text/csv" style="display:none">
+            <button id="btn-add-prem">+ Add premium</button>
+            <button id="btn-clear-prem">Clear</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Policy</th><th>Type</th><th class="num">Amount (USD)</th><th></th></tr></thead>
+            <tbody id="prem-body"></tbody>
+            <tfoot id="prem-foot"></tfoot>
+          </table>
+        </div>
+      </div>
+      <div class="two-col">
+        <div class="card"><h3 style="margin-top:0">Medical expense capping</h3><div id="medical-calc"></div></div>
+        <div class="card"><h3 style="margin-top:0">Life insurance</h3><div id="life-calc"></div></div>
+      </div>
+      <div class="card"><h3 style="margin-top:0">Employee remuneration (cap base)</h3><div id="remun-detail"></div></div>
     </section>
 
     <!-- Current tax -->
@@ -216,6 +247,8 @@
               </select></div>
             <div class="field"><label>CIT rebate %</label><input id="s-rebatePct" type="number" step="0.01" min="0" max="100" placeholder="year-specific"></div>
             <div class="field"><label>CIT rebate cap</label><input id="s-rebateCap" type="number" step="0.01" min="0" placeholder="e.g. 40000"></div>
+            <div class="field"><label>Medical cap rate %</label><input id="s-capRate" type="number" step="0.01" min="0" max="100" placeholder="1 (or 2 if portable)"></div>
+            <div class="field full"><label>Remuneration accounts (medical cap base, comma-separated)</label><input id="s-remunCodes" placeholder="600100,600110,…"></div>
           </div>
           <div class="form-grid" style="margin-top:14px">
             <div class="field full"><label style="color:var(--brand-dark)">GL accounts for journals</label></div>
@@ -258,7 +291,7 @@
   <div class="toast" id="toast"></div>
   <script src="far-import.js?v=1"></script>
   <script src="tb-aus155.js?v=2"></script>
-  <script src="sample-data.js?v=3"></script>
-  <script src="app.js?v=9"></script>
+  <script src="sample-data.js?v=4"></script>
+  <script src="app.js?v=10"></script>
 </body>
 </html>
