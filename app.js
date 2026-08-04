@@ -379,7 +379,6 @@ function render() {
   else if (activeTab === 'medical') renderMedical();
   else if (activeTab === 'leases') renderLeases();
   else if (activeTab === 'current') renderCurrent(P);
-  else if (activeTab === 'deferred') renderDeferred(P);
   else if (activeTab === 'recon') renderRecon(P);
   else if (activeTab === 'movement') renderMovement(P);
   else if (activeTab === 'journals') renderJournals(P);
@@ -835,44 +834,28 @@ function renderRecon(P) {
 
 /* ----- Provision movement ----- */
 function renderMovement(P) {
-  if (hasCurrentTaxTB()) {
-    // Proof: the closing provision is the FY26 charge plus the FY25 provision
-    // still outstanding (return not yet closed). FX revaluation (UFX journals,
-    // part of the stat adjustment) reconciles the expected balance to the TB.
-    const charge = P.currentTax;
-    const priorProv = num(provision.priorYearProvisionCarried || 0);
-    const expected = charge + priorProv + P.priorAdj;   // expected closing payable
-    const tbClose = currentTaxPayableTB('closing');
-    const fxReval = tbClose - expected;                  // balancing to TB
-    $('#move-current').innerHTML = `
-      <tr><td class="label">Current year tax charge (YA ${esc(settings.ya)})</td><td class="num" title="${exact(charge)}">${acc(charge)}</td></tr>
-      <tr><td class="label">Prior year provision carried — FY25 return still open</td>
-          <td class="num"><input class="amt" type="number" step="0.01" data-scalar="priorYearProvisionCarried" value="${provision.priorYearProvisionCarried}"></td></tr>
-      <tr><td class="label">(Over)/under provision — prior years</td>
-          <td class="num"><input class="amt" type="number" step="0.01" data-scalar="priorYearAdjustment" value="${provision.priorYearAdjustment}"></td></tr>
-      <tr class="grand"><td class="label">Current tax payable / (receivable) — per financial statements</td><td class="num" title="${exact(expected)}">${acc(expected)}</td></tr>
-      <tr class="section"><td colspan="2">Reconciliation to the ledger</td></tr>
-      <tr><td class="label">FX revaluation (per stat adjustment)</td><td class="num" title="${exact(fxReval)}">${acc(fxReval)}</td></tr>
-      <tr class="subtotal"><td class="label">Closing per trial balance <span class="src-tag">TB</span></td><td class="num" title="${exact(tbClose)}">${acc(tbClose)}</td></tr>
-      <tr><td class="label"><span class="hint-text">The financial-statements figure is the expected closing. Positive = payable, negative = net receivable. The FX revaluation (UFX journals) belongs to the transfer-pricing stat adjustment and reconciles the FS figure to the ledger.</span></td><td></td></tr>`;
-  } else {
-    $('#move-current').innerHTML = `
-      <tr><td class="label">Opening current tax payable</td>
-          <td class="num"><input class="amt" type="number" step="0.01" data-scalar="openingCurrentTaxPayable" value="${provision.openingCurrentTaxPayable}"></td></tr>
-      <tr><td class="label">Current year tax charge</td><td class="num">${acc(P.currentTax)}</td></tr>
-      <tr><td class="label">(Over)/under provision — prior years</td>
-          <td class="num"><input class="amt" type="number" step="0.01" data-scalar="priorYearAdjustment" value="${provision.priorYearAdjustment}"></td></tr>
-      <tr><td class="label">Tax paid during the year</td>
-          <td class="num"><input class="amt" type="number" step="0.01" data-scalar="taxPaid" value="${provision.taxPaid}"></td></tr>
-      <tr class="grand"><td class="label">Closing current tax payable</td><td class="num">${acc(P.closingPayable)}</td></tr>`;
+  // Current tax — the provision roll-forward by account (moved here from Journals).
+  // When no trial balance is linked, fall back to the simple editable roll-forward.
+  let curHtml = currentTaxRollupHtml(P);
+  if (!curHtml) {
+    curHtml = `<div class="card">
+      <h3 style="margin:0 0 10px">Current tax payable</h3>
+      <div class="table-wrap"><table class="comp-table"><tbody>
+        <tr><td class="label">Opening current tax payable</td>
+            <td class="num"><input class="amt" type="number" step="0.01" data-scalar="openingCurrentTaxPayable" value="${provision.openingCurrentTaxPayable}"></td></tr>
+        <tr><td class="label">Current year tax charge</td><td class="num">${acc(P.currentTax)}</td></tr>
+        <tr><td class="label">(Over)/under provision — prior years</td>
+            <td class="num"><input class="amt" type="number" step="0.01" data-scalar="priorYearAdjustment" value="${provision.priorYearAdjustment}"></td></tr>
+        <tr><td class="label">Tax paid during the year</td>
+            <td class="num"><input class="amt" type="number" step="0.01" data-scalar="taxPaid" value="${provision.taxPaid}"></td></tr>
+        <tr class="grand"><td class="label">Closing current tax payable</td><td class="num">${acc(P.closingPayable)}</td></tr>
+      </tbody></table></div>
+    </div>`;
   }
+  $('#move-current-rollup').innerHTML = curHtml;
 
-  $('#move-deferred').innerHTML = `
-    <tr><td class="label">Opening deferred tax ${P.openingDT >= 0 ? '(liability)' : 'asset'}</td><td class="num">${acc(P.openingDT)}</td></tr>
-    <tr><td class="label">Prior year (over)/under provision</td><td class="num">${acc(P.deferredPriorYr)}</td></tr>
-    <tr><td class="label">Current year charge/(credit) to profit or loss</td><td class="num">${acc(P.deferredCY)}</td></tr>
-    <tr class="grand"><td class="label">Closing deferred tax ${P.closingDT >= 0 ? '(liability)' : 'asset'}</td><td class="num">${acc(P.closingDT)}</td></tr>
-    <tr><td class="label"><span class="hint-text">Underlying temporary difference</span></td><td class="num"><span class="hint-text">${acc(P.closingTD)}</span></td></tr>`;
+  // Deferred tax — the temporary-differences table (moved here from its own tab).
+  renderDeferred(P);
 }
 
 /* ----- Journals ----- */
@@ -916,9 +899,8 @@ function buildJournals(P) {
   return js;
 }
 
-function renderJournals(P) {
-  let recCard = '';
-  if (hasCurrentTaxTB()) {
+function currentTaxRollupHtml(P) {
+  if (!hasCurrentTaxTB()) return '';
     const tm = tbMap(), am = auditMap();
     const accts = currentTaxAccounts();
     const ledgerFY26 = -afterStatByAccount(settings.glTaxExpense, tm, am);   // current-year accrual booked (income tax expense)
@@ -948,7 +930,7 @@ function renderJournals(P) {
       const style = r.bold ? ' style="font-weight:700;background:#f8fafc"' : '';
       return `<tr${style}><td class="label">${r.label}</td>${cells}<td class="num">${acc(tot)}</td></tr>`;
     }).join('');
-    recCard = `<div class="card">
+    return `<div class="card">
       <h3 style="margin:0 0 2px">Current tax — provision roll-forward by account</h3>
       <div class="note-sub" style="color:var(--muted);font-size:0.82rem;margin-bottom:10px">Opening + FY25 + FY26 (per ledger) = closing per TB + stat; the expected provision differs by the journal to post. Ledger sign — a payable (credit) is in parentheses.</div>
       <div class="table-wrap"><table>
@@ -957,12 +939,14 @@ function renderJournals(P) {
       </table></div>
       <p class="legend">FY26 = the current-year accrual actually booked (income tax expense ${fmt(-ledgerFY26)}); FY25 = the prior-year movement in the ledger. Reval is already removed via the stat adjustment.<br>
       <strong>Journal — FY26</strong> = Expected FY26 − FY26 movement (the current-year top-up: correct charge ${fmt(P.currentTax)} − booked ${fmt(-ledgerFY26)}).<br>
-      <strong>Journal — FY25</strong> = Expected FY25 − (Opening + FY25 movement) (the prior-year true-up). Both post in CT-FY26 / CT-FY25 below.</p>
+      <strong>Journal — FY25</strong> = Expected FY25 − (Opening + FY25 movement) (the prior-year true-up). Both post as CT-FY26 / CT-FY25 in the Journals tab.</p>
     </div>`;
-  }
+}
+
+function renderJournals(P) {
   const js = buildJournals(P);
-  if (!js.length) { $('#journals-wrap').innerHTML = recCard || `<div class="card"><p class="legend" style="margin:0">Nothing to post yet — enter the computation figures first.</p></div>`; return; }
-  $('#journals-wrap').innerHTML = recCard + js.map(j => {
+  if (!js.length) { $('#journals-wrap').innerHTML = `<div class="card"><p class="legend" style="margin:0">Nothing to post yet — enter the computation figures first.</p></div>`; return; }
+  $('#journals-wrap').innerHTML = js.map(j => {
     const totDr = j.lines.reduce((t, l) => t + l.dr, 0);
     const totCr = j.lines.reduce((t, l) => t + l.cr, 0);
     return `<div class="card">

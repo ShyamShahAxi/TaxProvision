@@ -26,7 +26,6 @@
     <button class="tab" data-tab="medical">Medical</button>
     <button class="tab" data-tab="leases">Leases</button>
     <button class="tab" data-tab="current">Statement of Taxable Income</button>
-    <button class="tab" data-tab="deferred">Deferred Tax</button>
     <button class="tab" data-tab="recon">Tax Reconciliation</button>
     <button class="tab" data-tab="movement">Provision Movement</button>
     <button class="tab" data-tab="journals">Journals</button>
@@ -166,31 +165,6 @@
       <p class="legend">Classify each adjustment as <strong>permanent</strong> (never reverses — e.g. fines, private expenses, exempt income) or <strong>temporary</strong> (reverses through capital allowances / provisions — feeds deferred tax and the reconciliation). Depreciation and capital allowances imported from FAR are temporary.</p>
     </section>
 
-    <!-- Deferred tax -->
-    <section class="view" id="view-deferred">
-      <div class="view-head">
-        <div><h2>Deferred tax</h2><div class="desc">Temporary differences &times; tax rate. Positive difference (carrying amount &gt; tax base) is a liability; negative is an asset.</div></div>
-        <div class="toolbar"><button class="primary sm" id="btn-add-dt">+ Add difference</button></div>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr>
-            <th>Temporary difference</th>
-            <th class="num">Opening</th>
-            <th class="num">Prior yr movement</th>
-            <th class="num">Current yr movement</th>
-            <th class="num">Closing</th>
-            <th class="num">Opening tax</th>
-            <th class="num">Closing tax</th>
-            <th></th>
-          </tr></thead>
-          <tbody id="deferred-body"></tbody>
-          <tfoot id="deferred-foot"></tfoot>
-        </table>
-      </div>
-      <p class="legend" id="deferred-note"></p>
-    </section>
-
     <!-- Reconciliation -->
     <section class="view" id="view-recon">
       <div class="view-head">
@@ -209,17 +183,31 @@
     <!-- Provision movement -->
     <section class="view" id="view-movement">
       <div class="view-head">
-        <div><h2>Provision movement</h2><div class="desc">Roll-forward of the current tax liability and the deferred tax balance.</div></div>
+        <div><h2>Provision movement</h2><div class="desc">Current tax provision roll-forward by account, and the deferred tax temporary differences.</div></div>
       </div>
-      <div class="two-col">
-        <div class="card">
-          <h3>Current tax payable</h3>
-          <div class="table-wrap"><table class="comp-table"><tbody id="move-current"></tbody></table></div>
+      <div id="move-current-rollup"></div>
+      <div class="card">
+        <div class="view-head" style="margin-bottom:14px">
+          <div><h3 style="margin:0;font-size:1rem">Deferred tax</h3><div class="desc">Temporary differences &times; tax rate. Positive difference (carrying amount &gt; tax base) is a liability; negative is an asset.</div></div>
+          <div class="toolbar"><button class="primary sm" id="btn-add-dt">+ Add difference</button></div>
         </div>
-        <div class="card">
-          <h3>Deferred tax balance</h3>
-          <div class="table-wrap"><table class="comp-table"><tbody id="move-deferred"></tbody></table></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th>Temporary difference</th>
+              <th class="num">Opening</th>
+              <th class="num">Prior yr movement</th>
+              <th class="num">Current yr movement</th>
+              <th class="num">Closing</th>
+              <th class="num">Opening tax</th>
+              <th class="num">Closing tax</th>
+              <th></th>
+            </tr></thead>
+            <tbody id="deferred-body"></tbody>
+            <tfoot id="deferred-foot"></tfoot>
+          </table>
         </div>
+        <p class="legend" id="deferred-note"></p>
       </div>
     </section>
 
@@ -314,6 +302,6 @@
   <script src="far-import.js?v=1"></script>
   <script src="tb-aus155.js?v=2"></script>
   <script src="sample-data.js?v=10"></script>
-  <script src="app.js?v=31"></script>
+  <script src="app.js?v=32"></script>
 </body>
 </html>
