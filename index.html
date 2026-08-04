@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Tax Provision</title>
   <meta name="description" content="Corporate tax provision — current tax computation, deferred tax, effective-rate reconciliation and disclosure notes. Runs entirely in your browser." />
-  <link rel="stylesheet" href="styles.css?v=3" />
+  <link rel="stylesheet" href="styles.css?v=4" />
 </head>
 <body>
   <header class="app-header">
@@ -16,10 +16,13 @@
     <div class="company">
       <div id="company-name">Company</div>
       <div class="sub" id="header-ya"></div>
+      <div class="year-switch"><label for="year-select">Financial year</label>
+        <select id="year-select" title="Switch financial year"></select></div>
     </div>
   </header>
 
   <nav class="tabs" role="tablist">
+    <button class="tab" data-tab="instructions">Instructions</button>
     <button class="tab active" data-tab="dashboard">Dashboard</button>
     <button class="tab" data-tab="notes">Tax Note - FY26</button>
     <button class="tab" data-tab="tb">Trial Balance</button>
@@ -30,7 +33,6 @@
     <button class="tab" data-tab="medical">Medical</button>
     <button class="tab" data-tab="leases">Leases</button>
     <button class="tab" data-tab="recon">Tax Reconciliation</button>
-    <button class="tab" data-tab="instructions">Instructions</button>
     <button class="tab" data-tab="data">Data &amp; Settings</button>
   </nav>
 
@@ -356,6 +358,6 @@
   <script src="far-import.js?v=1"></script>
   <script src="tb-aus155.js?v=2"></script>
   <script src="sample-data.js?v=10"></script>
-  <script src="app.js?v=36"></script>
+  <script src="app.js?v=37"></script>
 </body>
 </html>
