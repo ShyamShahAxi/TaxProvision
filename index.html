@@ -30,6 +30,7 @@
     <button class="tab" data-tab="medical">Medical</button>
     <button class="tab" data-tab="leases">Leases</button>
     <button class="tab" data-tab="recon">Tax Reconciliation</button>
+    <button class="tab" data-tab="instructions">Instructions</button>
     <button class="tab" data-tab="data">Data &amp; Settings</button>
   </nav>
 
@@ -232,6 +233,53 @@
     </section>
 
     <!-- Data & settings -->
+    <!-- Instructions -->
+    <section class="view" id="view-instructions">
+      <div class="view-head">
+        <div><h2>Instructions — what to upload</h2><div class="desc">The provision is trial-balance driven: load the source data below, then review the computed statements. Nothing is keyed by hand where it can be sourced.</div></div>
+      </div>
+
+      <div class="card">
+        <h3 style="margin-top:0">1 · Trial balance <span class="src-tag">required</span></h3>
+        <p class="legend" style="margin-top:0"><strong>Where:</strong> Trial Balance tab → <em>Import CSV</em>. <strong>Format:</strong> <code>Code, Name, Opening, Debit, Credit, Closing</code> — the full general ledger, one row per account.</p>
+        <p class="legend">The whole computation derives from here: profit before tax, the depreciation / capital-allowance / provision add-backs and deductions (each links to a GL account), the deferred tax temporary differences, and the current-tax payable/receivable accounts. Sign convention: debit positive, credit negative.</p>
+      </div>
+
+      <div class="card">
+        <h3 style="margin-top:0">2 · Audit / statutory adjustments <span class="src-tag">required</span></h3>
+        <p class="legend" style="margin-top:0"><strong>Where:</strong> Audit Adjustments tab → <em>Import Stat Adjustment CSV</em>. A multi-entity transfer-pricing / statutory-adjustment file; it is filtered to the entity code set in Data &amp; Settings and posted as balanced debit/credit adjustments.</p>
+        <p class="legend">The adjusted closing balance (closing + these adjustments) is what every computation line and the deferred tax use. FX revaluation (UFX) journals belong here — they form part of the stat adjustment.</p>
+      </div>
+
+      <div class="card">
+        <h3 style="margin-top:0">3 · Insurance premiums <span class="src-tag">required</span></h3>
+        <p class="legend" style="margin-top:0"><strong>Where:</strong> Medical tab → attach the premium breakdown (CSV) and the invoice PDF as source. Split each policy <strong>Life</strong> vs <strong>Medical</strong>.</p>
+        <p class="legend">Life premiums are non-deductible (permanent add-back). Medical premiums feed the medical-expense cap — deductible medical is limited to the cap rate (1%, or 2% portable) of employee remuneration; the excess is added back.</p>
+      </div>
+
+      <div class="card">
+        <h3 style="margin-top:0">4 · Lease GLs (FRS 116 / IFRS 16) <span class="src-tag">in the TB</span></h3>
+        <p class="legend" style="margin-top:0">No separate upload — the Leases tab derives the adjustment entirely from the lease GL accounts, so just make sure they are in the trial balance: <strong>right-of-use asset</strong>, <strong>lease liability</strong>, <strong>ROU depreciation (670150)</strong>, <strong>lease interest (680120)</strong> and <strong>rent</strong>.</p>
+        <p class="legend">The net (reverse ROU depreciation + interest, deduct rent) feeds Current Tax; the ROU-vs-lease-liability difference feeds Deferred Tax.</p>
+      </div>
+
+      <div class="card">
+        <h3 style="margin-top:0">5 · FAR backup <span class="src-tag">optional</span></h3>
+        <p class="legend" style="margin-top:0"><strong>Where:</strong> Data &amp; Settings → FAR link → <em>Pull from FAR</em> or <em>Import FAR backup (JSON)</em>. Brings in accounting depreciation, capital allowances and the accelerated-allowance temporary difference straight from the Fixed Asset Register.</p>
+      </div>
+
+      <div class="card">
+        <h3 style="margin-top:0">6 · Settings <span class="src-tag">once</span></h3>
+        <p class="legend" style="margin-top:0"><strong>Where:</strong> Data &amp; Settings. Set the Year of Assessment, tax rate (17%), exemption scheme, exchange rate (S$/US$), the entity code, the current-tax &amp; remuneration account lists, and the GL codes the provision journals post to.</p>
+      </div>
+
+      <div class="card" style="border-color:var(--brand)">
+        <h3 style="margin-top:0">Then review — everything ties to the final TB</h3>
+        <p class="legend" style="margin-top:0"><strong>Statement of Taxable Income</strong> → <strong>Provision Movement</strong> (current-tax roll-forward + deferred tax) → <strong>Journals</strong> → <strong>Tax Note</strong>. The Trial Balance's <em>Final</em> column = Adjusted + tax journals, and the Tax Note income tax expense ties to it.</p>
+        <p class="legend"><strong>At year end:</strong> Data &amp; Settings → <em>Roll forward to next YA</em> carries the closing balances into the new year, then repeat steps 1–3 with the new year's data.</p>
+      </div>
+    </section>
+
     <section class="view" id="view-data">
       <div class="view-head"><div><h2>Data &amp; settings</h2><div class="desc">Everything is stored locally in this browser (localStorage). Export regularly to back up.</div></div></div>
       <div class="two-col">
@@ -285,6 +333,12 @@
             <button id="btn-import">Restore (JSON)</button>
             <input type="file" id="import-file" accept="application/json,.json" style="display:none">
           </div>
+          <h3 style="margin-top:22px">Year roll-forward</h3>
+          <div class="toolbar" style="margin-bottom:12px">
+            <button class="primary" id="btn-rollforward">Roll forward to next YA</button>
+          </div>
+          <p class="legend" style="margin-top:0">Carries balance-sheet closing balances into the new year as opening balances, resets the P&amp;L and current-year inputs, and moves the closed year to the prior-year reference. A JSON backup of the current year downloads first — then upload the new year's data (see the <strong>Instructions</strong> tab).</p>
+
           <h3 style="margin-top:22px">Sample &amp; reset</h3>
           <div class="toolbar">
             <button id="btn-sample">Load sample provision</button>
@@ -302,6 +356,6 @@
   <script src="far-import.js?v=1"></script>
   <script src="tb-aus155.js?v=2"></script>
   <script src="sample-data.js?v=10"></script>
-  <script src="app.js?v=35"></script>
+  <script src="app.js?v=36"></script>
 </body>
 </html>
