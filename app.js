@@ -57,6 +57,7 @@ const emptyProvision = () => ({
   priorTaxByAccount: {},    // FY25 (prior year) expected closing by current-tax account code
   taxPaid: 0,
   far: null,                // {companyName,reportingDate,priorDate,importedAt,closing,opening}
+  locked: false,            // when true the year is finalised — edits/imports are blocked
 });
 
 let settings = loadSettings();
@@ -201,10 +202,11 @@ function medicalAddback() { return Math.max(0, medicalExpensesTotal() - medicalC
    Returned as a payable (liability positive): a net debit balance in the TB
    (a receivable) is therefore negative. */
 function currentTaxAccounts() { return (settings.currentTaxCodes || '').split(',').map(s => s.trim()).filter(Boolean); }
-/* Financial-year labels derived from the Year of Assessment, so figures re-label
-   correctly when the provision is rolled forward (YA 2026 → FY26 / prior FY25). */
-function fyCur() { const n = Number(settings.ya); return isFinite(n) ? 'FY' + String(n % 100).padStart(2, '0') : 'current year'; }
-function fyPrior() { const n = Number(settings.ya); return isFinite(n) ? 'FY' + String((n - 1) % 100).padStart(2, '0') : 'prior year'; }
+/* Financial-year labels derived from the Year of Assessment. Singapore basis:
+   a YA taxes the prior financial year, so FY = YA − 1 (YA 2027 → FY26, prior FY25).
+   Labels re-derive when the year changes, so roll-forward relabels correctly. */
+function fyCur() { const n = Number(settings.ya); return isFinite(n) ? 'FY' + String((n - 1) % 100).padStart(2, '0') : 'current year'; }
+function fyPrior() { const n = Number(settings.ya); return isFinite(n) ? 'FY' + String((n - 2) % 100).padStart(2, '0') : 'prior year'; }
 function currentTaxPayableTB(which) {
   const tm = tbMap(), am = auditMap();
   const net = currentTaxAccounts().reduce((s, c) => { const rr = tm[c]; if (!rr) return s; return s + (which === 'opening' ? num(rr.opening) : num(rr.closing) + (am[c] || 0)); }, 0);
@@ -411,6 +413,15 @@ let activeTab = 'dashboard';
 function renderAll() {
   $('#company-name').textContent = settings.companyName;
   $('#header-ya').textContent = 'YA ' + settings.ya + (settings.periodEnd ? ' · period end ' + settings.periodEnd : '');
+  const noteLabel = 'Tax Note - ' + fyCur();
+  const nt = $('#tab-notes'); if (nt) nt.textContent = noteLabel;
+  const ntitle = $('#notes-title'); if (ntitle) ntitle.textContent = noteLabel;
+  document.body.classList.toggle('locked', !!provision.locked);
+  const lb = $('#btn-lock'); if (lb) { lb.textContent = provision.locked ? 'Unlock this year' : 'Lock this year'; lb.classList.toggle('danger', !provision.locked); lb.classList.toggle('primary', !!provision.locked); }
+  const banner = $('#lock-banner');
+  if (banner) banner.innerHTML = provision.locked
+    ? `<div class="banner warn" style="margin:0 0 16px">🔒 <strong>YA ${esc(settings.ya)} (${esc(fyCur())}) is locked</strong> — finalised; changes are blocked. Unlock in Data &amp; Settings to edit.</div>`
+    : '';
   renderYearSelector();
   render();
 }
@@ -419,7 +430,7 @@ function renderYearSelector() {
   const sel = $('#year-select'); if (!sel) return;
   const cur = String(settings.ya);
   const opts = availableYears().map(ya => {
-    const n = Number(ya), fy = isFinite(n) ? ' · FY' + String(n % 100).padStart(2, '0') : '';
+    const n = Number(ya), fy = isFinite(n) ? ' · FY' + String((n - 1) % 100).padStart(2, '0') : '';
     return `<option value="${attr(ya)}"${ya === cur ? ' selected' : ''}>YA ${esc(ya)}${fy}</option>`;
   }).join('');
   sel.innerHTML = opts + `<option value="__roll__">＋ Roll forward to next YA…</option>`;
@@ -1358,6 +1369,7 @@ function switchTab(tab) {
    re-render only on 'change' (blur) so typing doesn't steal focus. */
 function onFieldInput(e) {
   const t = e.target;
+  if (provision.locked) { if (e.type === 'change') render(); return; }   // finalised — discard edits
   const committed = e.type === 'change';
   if (t.dataset.scalar) {
     provision[t.dataset.scalar] = t.value === '' ? 0 : num(t.value);
@@ -1409,6 +1421,21 @@ function wire() {
   document.querySelector('main').addEventListener('input', onFieldInput);
   document.querySelector('main').addEventListener('change', onFieldInput);
   document.querySelector('main').addEventListener('click', onClick);
+
+  // Lock guard — when the year is finalised, block every mutating control
+  // (add / import / edit / delete / clear / save settings). Viewing, exporting,
+  // switching years, unlocking and rolling forward stay allowed.
+  const LOCK_ALLOW = /^(btn-lock|btn-export-json|btn-rollforward|exp-)/;
+  document.addEventListener('click', e => {
+    if (!provision.locked) return;
+    const t = e.target.closest('button, [data-act]');
+    if (!t) return;
+    if (t.classList && t.classList.contains('tab')) return;
+    if (t.dataset && t.dataset.act === 'view-pdf') return;
+    if (t.id && LOCK_ALLOW.test(t.id)) return;
+    e.preventDefault(); e.stopPropagation();
+    toast('This year is locked — unlock in Data & Settings to make changes');
+  }, true);
 
   $('#btn-add-dt').addEventListener('click', () => {
     provision.deferredItems.push({ id: uid(), label: '', openingTD: 0, closingTD: 0, source: 'manual' });
@@ -1533,6 +1560,11 @@ function wire() {
   });
   $('#btn-restore').addEventListener('click', () => { restoreSampleLines(); renderAll(); toast('Automated lines restored'); });
   const rf = $('#btn-rollforward'); if (rf) rf.addEventListener('click', rollForwardYear);
+  const lk = $('#btn-lock'); if (lk) lk.addEventListener('click', () => {
+    provision.locked = !provision.locked;
+    saveProvision(); snapshotActiveYear(); renderAll();
+    toast(provision.locked ? `YA ${settings.ya} locked` : `YA ${settings.ya} unlocked`);
+  });
   const ys = $('#year-select'); if (ys) ys.addEventListener('change', e => {
     const v = e.target.value;
     if (v === '__roll__') { rollForwardYear(); renderYearSelector(); }
@@ -1565,18 +1597,24 @@ function rollForwardYear() {
   // Snapshot figures from the closing year before mutating.
   const am = auditMap();
   const P = recompute();
-  const adjClose = code => { const a = provision.tb.find(x => String(x.code) === String(code)); return (a ? num(a.closing) : 0) + (am[String(code)] || 0); };
+  const tjm = taxJournalMap(P);
+  const taxj = code => tjm[String(code)] || 0;
+  // Final (post-provision) closing = adjusted closing + tax provision journals.
+  // Rolling this forward opens the new year at the correct tax position — the
+  // current-tax and deferred accounts sit at their expected closing, not the raw
+  // ledger balance (e.g. 130200 opens at 1,834,340, 260400 at −277,019).
+  const finalClose = code => { const a = provision.tb.find(x => String(x.code) === String(code)); return (a ? num(a.closing) : 0) + (am[String(code)] || 0) + taxj(code); };
 
-  // Current-tax prior-year reference = the balances still on the balance sheet.
+  // Current-tax prior-year reference = the expected closing still on the balance sheet.
   const priorByAcct = {};
-  currentTaxAccounts().forEach(c => { priorByAcct[c] = round2(adjClose(c)); });
-  const priorCarried = round2(currentTaxPayableTB('closing'));
+  currentTaxAccounts().forEach(c => { priorByAcct[c] = round2(finalClose(c)); });
+  const priorCarried = round2(-currentTaxAccounts().reduce((s, c) => s + finalClose(c), 0));
 
-  // Roll the TB: balance-sheet accounts carry (adjusted closing → opening),
+  // Roll the TB: balance-sheet accounts carry (final closing → opening),
   // P&L accounts (4/5/6/7) reset to zero for the new year.
   provision.tb = provision.tb.map(a => {
     const pl = /^[4567]/.test(String(a.code));
-    const open = pl ? 0 : round2(num(a.closing) + (am[String(a.code)] || 0));
+    const open = pl ? 0 : round2(num(a.closing) + (am[String(a.code)] || 0) + taxj(a.code));
     return Object.assign({}, a, { opening: open, debit: 0, credit: 0, closing: open });
   });
 
@@ -1594,6 +1632,7 @@ function rollForwardYear() {
   provision.priorYearAdjustment = 0;
   provision.openingCurrentTaxPayable = 0;
   provision.taxPaid = 0;
+  provision.locked = false;   // the new year is editable
 
   // Advance the year and basis period.
   if (/^\d{4}$/.test(oldYa)) settings.ya = nextYa;
