@@ -930,22 +930,23 @@ function renderJournals(P) {
     const journal = c => expected(c) - tbStat(c);                   // journal to post (provision adjustment)
     const nm = c => { const r = tm[c]; return r ? r.name : c; };
     const rowsDef = [
-      { label: 'Opening balance', fn: opening },
+      { label: 'Opening balance', fn: opening, bold: true },
       { label: 'FY25 movement (prior year, per ledger)', fn: fy25 },
       { label: 'FY26 movement (current year accrual, per ledger)', fn: fy26 },
-      { label: 'Closing per TB + stat adjustments', fn: tbStat, cls: 'subtotal' },
+      { label: 'Closing per TB + stat adjustments', fn: tbStat, bold: true },
       { label: 'Expected — FY26 (current year)', fn: c => fy26TaxByAccount(c, P) },
       { label: 'Expected — FY25 (prior year)', fn: c => fy25TaxByAccount(c) },
-      { label: 'Expected closing (provision)', fn: expected, cls: 'subtotal' },
-      { label: 'Journal — FY26 (current year)', fn: c => ctJournalFY26(c, P) },
-      { label: 'Journal — FY25 (prior year)', fn: c => ctJournalFY25(c, P) },
-      { label: 'Journal to post (total)', fn: journal, cls: 'grand' },
+      { label: 'Expected closing (provision)', fn: expected, bold: true },
+      { label: 'Journal — FY26 (current year) = Expected FY26 − FY26 movement', fn: c => ctJournalFY26(c, P) },
+      { label: 'Journal — FY25 (prior year) = Expected FY25 − (Opening + FY25 movement)', fn: c => ctJournalFY25(c, P) },
+      { label: 'Journal to post (total)', fn: journal, bold: true },
     ];
     const th = accts.map(c => `<th class="num" title="${attr(nm(c))}">${esc(c)}</th>`).join('');
     const body = rowsDef.map(r => {
       let tot = 0;
       const cells = accts.map(c => { const v = r.fn(c); tot += v; return `<td class="num" title="${exact(v)}">${acc(v)}</td>`; }).join('');
-      return `<tr class="${r.cls || ''}"><td class="label">${r.label}</td>${cells}<td class="num">${acc(tot)}</td></tr>`;
+      const style = r.bold ? ' style="font-weight:700;background:#f8fafc"' : '';
+      return `<tr${style}><td class="label">${r.label}</td>${cells}<td class="num">${acc(tot)}</td></tr>`;
     }).join('');
     recCard = `<div class="card">
       <h3 style="margin:0 0 2px">Current tax — provision roll-forward by account</h3>
@@ -954,7 +955,9 @@ function renderJournals(P) {
         <thead><tr><th>Movement</th>${th}<th class="num">Total</th></tr></thead>
         <tbody>${body}</tbody>
       </table></div>
-      <p class="legend">FY26 = the current-year accrual actually booked (income tax expense ${fmt(-ledgerFY26)}); FY25 = the prior-year movement in the ledger. Reval is already removed via the stat adjustment. The <strong>journal to post</strong> is the real provision adjustment — the current-year top-up (correct charge ${fmt(P.currentTax)} − booked ${fmt(-ledgerFY26)}) plus the prior-year true-up — posted in CT-1 below.</p>
+      <p class="legend">FY26 = the current-year accrual actually booked (income tax expense ${fmt(-ledgerFY26)}); FY25 = the prior-year movement in the ledger. Reval is already removed via the stat adjustment.<br>
+      <strong>Journal — FY26</strong> = Expected FY26 − FY26 movement (the current-year top-up: correct charge ${fmt(P.currentTax)} − booked ${fmt(-ledgerFY26)}).<br>
+      <strong>Journal — FY25</strong> = Expected FY25 − (Opening + FY25 movement) (the prior-year true-up). Both post in CT-FY26 / CT-FY25 below.</p>
     </div>`;
   }
   const js = buildJournals(P);
