@@ -454,6 +454,18 @@ function taxJournalMap(P) {
   return m;
 }
 
+/* Human label for a GL account created by the provision but not yet in the
+   trial balance (the journal-only rows: deferred tax liability/expense, etc.). */
+function glAccountName(code) {
+  const s = settings, c = String(code);
+  if (c === String(s.glDeferredBalance)) return 'Deferred tax liability / (asset)';
+  if (c === String(s.glDeferredExpense)) return 'Deferred tax expense';
+  if (c === String(s.glTaxExpense)) return 'Income tax expense';
+  if (c === String(s.glTaxPayable)) return 'Provision for income tax';
+  if (c === String(s.glReval)) return 'Revaluation (FX)';
+  return 'Tax provision';
+}
+
 function renderTB() {
   const body = $('#tb-body');
   const am = auditMap();
@@ -461,82 +473,93 @@ function renderTB() {
   const taxj = code => tjm[String(code)] || 0;
   const q = tbFilter.trim().toLowerCase();
   const eb = $('#btn-tb-edit'); if (eb) { eb.textContent = tbEdit ? 'Done' : 'Edit'; eb.classList.toggle('primary', tbEdit); }
+  // Real TB accounts, plus journal-only accounts the provision creates but that
+  // are not yet in the ledger (e.g. deferred tax liability/expense) — so the Tax
+  // journals / Final columns show the complete post-provision position.
+  const tbCodes = new Set(provision.tb.map(a => String(a.code)));
+  const extra = Object.keys(tjm)
+    .filter(k => Math.abs(tjm[k]) > 0.005 && !tbCodes.has(k))
+    .map(code => ({ a: { code, name: glAccountName(code), opening: 0, debit: 0, credit: 0, closing: 0 }, i: -1, jnl: true }));
+
   // Keep original indices so edits map back, but display sorted by account number.
-  const rows = provision.tb.map((a, i) => ({ a, i }))
+  const rows = provision.tb.map((a, i) => ({ a, i })).concat(extra)
     .sort((x, y) => String(x.a.code).localeCompare(String(y.a.code), undefined, { numeric: true }))
     .filter(({ a }) => !q || String(a.code).toLowerCase().includes(q) || String(a.name).toLowerCase().includes(q));
+
+  const cell = (v) => `<td class="num" title="${exact(v)}">${money(v)}</td>`;
+  const viewRow = ({ a, i, jnl }) => {
+    const adj = am[String(a.code)] || 0;
+    const adjusted = num(a.closing) + adj;
+    const tj = taxj(a.code);
+    const tag = jnl ? ' <span class="src-tag">jnl</span>' : '';
+    return `<tr data-line="tb" data-idx="${i}">
+      <td class="tb-code">${esc(a.code)}</td>
+      <td class="tb-name" title="${attr(a.name)}">${esc(a.name)}${tag}</td>
+      ${cell(a.opening)}${cell(a.debit)}${cell(a.credit)}${cell(a.closing)}${cell(adj)}${cell(adjusted)}${cell(tj)}${cell(adjusted + tj)}
+      <td class="act"></td>
+    </tr>`;
+  };
+  const editRow = ({ a, i }) => {
+    const adjusted = num(a.closing) + (am[String(a.code)] || 0);
+    return `<tr data-line="tb" data-idx="${i}">
+      <td><input class="desc-in" data-key="code" value="${attr(a.code)}"></td>
+      <td><input class="desc-in" data-key="name" value="${attr(a.name)}"></td>
+      <td class="num"><input class="amt" type="number" step="0.01" data-key="opening" value="${a.opening}"></td>
+      <td class="num"><input class="amt" type="number" step="0.01" data-key="debit" value="${a.debit}"></td>
+      <td class="num"><input class="amt" type="number" step="0.01" data-key="credit" value="${a.credit}"></td>
+      <td class="num"><input class="amt" type="number" step="0.01" data-key="closing" value="${a.closing}"></td>
+      <td class="num">${money(am[String(a.code)] || 0)}</td>
+      <td class="num">${money(adjusted)}</td>
+      <td class="num">${money(taxj(a.code))}</td>
+      <td class="num">${money(adjusted + taxj(a.code))}</td>
+      <td class="act"><button class="ghost sm" data-act="del-line" title="Remove">&times;</button></td>
+    </tr>`;
+  };
 
   if (!provision.tb.length) {
     body.innerHTML = `<tr class="empty-row"><td colspan="11">No accounts. Add one, import a CSV, load the sample, or pull from FAR in Data &amp; Settings.</td></tr>`;
   } else if (!rows.length) {
     body.innerHTML = `<tr class="empty-row"><td colspan="11">No accounts match “${esc(tbFilter)}”.</td></tr>`;
-  } else if (tbEdit) {
-    body.innerHTML = rows.map(({ a, i }) => {
-      const adjusted = num(a.closing) + (am[String(a.code)] || 0);
-      return `<tr data-line="tb" data-idx="${i}">
-        <td><input class="desc-in" data-key="code" value="${attr(a.code)}"></td>
-        <td><input class="desc-in" data-key="name" value="${attr(a.name)}"></td>
-        <td class="num"><input class="amt" type="number" step="0.01" data-key="opening" value="${a.opening}"></td>
-        <td class="num"><input class="amt" type="number" step="0.01" data-key="debit" value="${a.debit}"></td>
-        <td class="num"><input class="amt" type="number" step="0.01" data-key="credit" value="${a.credit}"></td>
-        <td class="num"><input class="amt" type="number" step="0.01" data-key="closing" value="${a.closing}"></td>
-        <td class="num">${money(am[String(a.code)] || 0)}</td>
-        <td class="num">${money(adjusted)}</td>
-        <td class="num">${money(taxj(a.code))}</td>
-        <td class="num">${money(adjusted + taxj(a.code))}</td>
-        <td class="act"><button class="ghost sm" data-act="del-line" title="Remove">&times;</button></td>
-      </tr>`;
-    }).join('');
   } else {
-    body.innerHTML = rows.map(({ a, i }) => {
-      const adj = am[String(a.code)] || 0;
-      const adjusted = num(a.closing) + adj;
-      const tj = taxj(a.code);
-      const c = (v) => `<td class="num" title="${exact(v)}">${money(v)}</td>`;
-      return `<tr data-line="tb" data-idx="${i}">
-        <td class="tb-code">${esc(a.code)}</td>
-        <td class="tb-name" title="${attr(a.name)}">${esc(a.name)}</td>
-        ${c(a.opening)}${c(a.debit)}${c(a.credit)}${c(a.closing)}${c(adj)}${c(adjusted)}${c(tj)}${c(adjusted + tj)}
-        <td class="act"></td>
-      </tr>`;
-    }).join('');
+    body.innerHTML = rows.map(r => (tbEdit && !r.jnl) ? editRow(r) : viewRow(r)).join('');
   }
   const t = k => sum(provision.tb, k);
   const adjTot = Object.values(am).reduce((s, v) => s + v, 0);
   const closeTot = t('closing');
-  const tbCodes = new Set(provision.tb.map(a => String(a.code)));
-  const taxJnlTot = Object.keys(tjm).reduce((s, k) => s + (tbCodes.has(k) ? tjm[k] : 0), 0);
+  const taxJnlTot = Object.values(tjm).reduce((s, v) => s + v, 0);   // balanced journals net to 0
   $('#tb-foot').innerHTML = `<tr>
-    <td colspan="2">Total (${provision.tb.length} accounts${q ? `, ${rows.length} shown` : ''})</td>
+    <td colspan="2">Total (${provision.tb.length} accounts${extra.length ? ` + ${extra.length} journal` : ''}${q ? `, ${rows.length} shown` : ''})</td>
     <td class="num">${money(t('opening'))}</td><td class="num">${money(t('debit'))}</td><td class="num">${money(t('credit'))}</td>
     <td class="num">${money(closeTot)}</td><td class="num">${money(adjTot)}</td><td class="num">${money(closeTot + adjTot)}</td>
     <td class="num">${money(taxJnlTot)}</td><td class="num">${money(closeTot + adjTot + taxJnlTot)}</td><td></td></tr>`;
 
-  // Profit per the trial balance (adjusted closing balances of P&L accounts 4/5/6/7).
-  // Income carries a credit (negative) closing and expenses/tax a debit (positive),
-  // so profit after tax = −Σ(P&L closing) and PBT = PAT + tax expense.
+  // Final position = adjusted closing + tax provision journals (including the
+  // journal-only accounts above). Tax sits in the 7-series, below PBT, so PBT is
+  // unchanged; tax expense and profit after tax become the post-provision figures.
+  const finalBal = {};
+  provision.tb.forEach(a => { const k = String(a.code); finalBal[k] = num(a.closing) + (am[k] || 0) + taxj(k); });
+  extra.forEach(({ a }) => { finalBal[String(a.code)] = taxj(a.code); });
   let plAll = 0, taxExp = 0, drBal = 0, crBal = 0;
-  provision.tb.forEach(a => {
-    const bal = num(a.closing) + (am[String(a.code)] || 0);
+  Object.keys(finalBal).forEach(code => {
+    const bal = finalBal[code];
     if (bal >= 0) drBal += bal; else crBal += -bal;
-    const c = String(a.code);
-    if (/^[4567]/.test(c)) { plAll += bal; if (/^7/.test(c)) taxExp += bal; }
+    if (/^[4567]/.test(code)) { plAll += bal; if (/^7/.test(code)) taxExp += bal; }
   });
   const pat = -plAll, pbt = pat + taxExp;
   const pnl = `
-    <div class="pnl-item accent" title="Exact: ${exact(pbt)}"><div class="lbl">Profit before tax (per TB)</div><div class="val ${pbt < 0 ? 'neg' : ''}">${acc(pbt)}</div></div>
-    <div class="pnl-item" title="Exact: ${exact(-taxExp)}"><div class="lbl">Tax expense (per TB)</div><div class="val">${acc(-taxExp)}</div></div>
-    <div class="pnl-item accent" title="Exact: ${exact(pat)}"><div class="lbl">Profit after tax (per TB)</div><div class="val ${pat < 0 ? 'neg' : ''}">${acc(pat)}</div></div>`;
+    <div class="pnl-item accent" title="Exact: ${exact(pbt)}"><div class="lbl">Profit before tax (final TB)</div><div class="val ${pbt < 0 ? 'neg' : ''}">${acc(pbt)}</div></div>
+    <div class="pnl-item" title="Exact: ${exact(-taxExp)}"><div class="lbl">Tax expense (final TB)</div><div class="val">${acc(-taxExp)}</div></div>
+    <div class="pnl-item accent" title="Exact: ${exact(pat)}"><div class="lbl">Profit after tax (final TB)</div><div class="val ${pat < 0 ? 'neg' : ''}">${acc(pat)}</div></div>`;
   $('#tb-pnl-top').innerHTML = pnl;
   $('#tb-pnl-bottom').innerHTML = pnl;
 
   const diff = drBal - crBal;
   const balanced = Math.abs(diff) < 100;
   $('#tb-note').innerHTML =
-    `Total debit balances ${money(drBal)} · total credit balances ${money(crBal)} · ` +
+    `Final trial balance = adjusted closing + tax provision journals; the tiles show the post-provision position. Total debit ${money(drBal)} · total credit ${money(crBal)} · ` +
     (balanced ? `in balance (difference ${money(diff)} is source rounding).` : `<span class="neg">out of balance by ${money(diff)}.</span>`) +
-    ` &nbsp;PBT per the trial balance is the raw accounting result; the Current Tax computation uses statutory PBT of ${fmt(provision.profitBeforeTax)} — the difference is the transfer-pricing / non-TCG consolidation adjustments.` +
-    ` &nbsp;Figures display as whole numbers; full precision is retained for all calculations and exports (hover a value for the exact amount).`;
+    (extra.length ? ` &nbsp;Accounts tagged <span class="src-tag">jnl</span> are the deferred tax liability/expense the provision creates (not yet in the ledger).` : '') +
+    ` &nbsp;Current Tax uses statutory PBT of ${fmt(provision.profitBeforeTax)}. Figures display whole; full precision on hover.`;
 }
 
 /* ----- Audit adjustments ----- */
