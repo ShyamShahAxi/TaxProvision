@@ -11,6 +11,7 @@
 const STORE_KEY = 'taxprov.provision.v1';
 const SETTINGS_KEY = 'taxprov.settings.v1';
 const PREMDOC_KEY = 'taxprov.premiumDoc.v1'; // attached insurer invoice (PDF), kept out of the JSON backup
+const YEARS_KEY = 'taxprov.years.v1';        // archive of {settings,provision} per Year of Assessment, for the header year switcher
 
 /* ---------- Settings ---------- */
 const defaultSettings = {
@@ -74,6 +75,36 @@ function loadProvision() {
   } catch (e) { return emptyProvision(); }
 }
 function saveProvision() { localStorage.setItem(STORE_KEY, JSON.stringify(provision)); }
+
+/* ---------- Multi-year archive (header year switcher) ----------
+   The live working copy (STORE_KEY/SETTINGS_KEY) is always the ACTIVE year.
+   Every year the user has worked on is archived under YEARS_KEY, keyed by YA,
+   so the header dropdown can switch between them. The active year is snapshotted
+   into the archive only when leaving it (switch / roll-forward), so the archive
+   never goes stale for the year currently being edited. */
+function loadYears() { try { return JSON.parse(localStorage.getItem(YEARS_KEY)) || {}; } catch (e) { return {}; } }
+function saveYears(y) { localStorage.setItem(YEARS_KEY, JSON.stringify(y)); }
+function snapshotActiveYear() {
+  const y = loadYears();
+  y[String(settings.ya)] = { settings: JSON.parse(JSON.stringify(settings)), provision: JSON.parse(JSON.stringify(provision)) };
+  saveYears(y);
+}
+function availableYears() {
+  const set = new Set(Object.keys(loadYears()));
+  if (settings.ya) set.add(String(settings.ya));
+  return [...set].filter(Boolean).sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
+}
+function switchYear(ya) {
+  ya = String(ya);
+  if (ya === String(settings.ya)) return;
+  snapshotActiveYear();                       // preserve the current year's edits
+  const saved = loadYears()[ya];
+  if (!saved) { toast('No data stored for YA ' + ya); renderAll(); return; }
+  settings = Object.assign({}, defaultSettings, saved.settings);
+  provision = Object.assign(emptyProvision(), saved.provision);
+  saveSettings(); saveProvision(); renderAll();
+  toast('Switched to YA ' + settings.ya);
+}
 
 /* ---------- Helpers ---------- */
 const $ = sel => document.querySelector(sel);
@@ -380,7 +411,18 @@ let activeTab = 'dashboard';
 function renderAll() {
   $('#company-name').textContent = settings.companyName;
   $('#header-ya').textContent = 'YA ' + settings.ya + (settings.periodEnd ? ' · period end ' + settings.periodEnd : '');
+  renderYearSelector();
   render();
+}
+
+function renderYearSelector() {
+  const sel = $('#year-select'); if (!sel) return;
+  const cur = String(settings.ya);
+  const opts = availableYears().map(ya => {
+    const n = Number(ya), fy = isFinite(n) ? ' · FY' + String(n % 100).padStart(2, '0') : '';
+    return `<option value="${attr(ya)}"${ya === cur ? ' selected' : ''}>YA ${esc(ya)}${fy}</option>`;
+  }).join('');
+  sel.innerHTML = opts + `<option value="__roll__">＋ Roll forward to next YA…</option>`;
 }
 
 function render() {
@@ -1491,6 +1533,11 @@ function wire() {
   });
   $('#btn-restore').addEventListener('click', () => { restoreSampleLines(); renderAll(); toast('Automated lines restored'); });
   const rf = $('#btn-rollforward'); if (rf) rf.addEventListener('click', rollForwardYear);
+  const ys = $('#year-select'); if (ys) ys.addEventListener('change', e => {
+    const v = e.target.value;
+    if (v === '__roll__') { rollForwardYear(); renderYearSelector(); }
+    else switchYear(v);
+  });
   $('#btn-clear').addEventListener('click', () => {
     if (!confirm('Clear all provision data from this browser?')) return;
     localStorage.removeItem(STORE_KEY); localStorage.removeItem(SETTINGS_KEY); localStorage.removeItem(PREMDOC_KEY);
@@ -1511,8 +1558,9 @@ function rollForwardYear() {
   const nextYa = /^\d{4}$/.test(oldYa) ? String(Number(oldYa) + 1) : oldYa;
   if (!confirm(`Roll forward to YA ${nextYa}?\n\n• Closing balances carry into the new year as opening balances\n• P&L and current-year inputs reset\n• YA ${oldYa} becomes the prior-year reference\n\nA JSON backup of YA ${oldYa} downloads first.`)) return;
 
-  // Back up the closing year.
+  // Back up the closing year — to a file and to the in-app year archive.
   download(`tax-provision-ya${oldYa || 'current'}.json`, JSON.stringify({ settings, provision }, null, 2), 'application/json');
+  snapshotActiveYear();
 
   // Snapshot figures from the closing year before mutating.
   const am = auditMap();
@@ -1551,7 +1599,7 @@ function rollForwardYear() {
   if (/^\d{4}$/.test(oldYa)) settings.ya = nextYa;
   if (settings.periodEnd) { const d = String(settings.periodEnd).split('-'); if (d.length === 3 && /^\d{4}$/.test(d[0])) settings.periodEnd = (Number(d[0]) + 1) + '-' + d[1] + '-' + d[2]; }
 
-  saveSettings(); saveProvision(); renderAll();
+  saveSettings(); saveProvision(); snapshotActiveYear(); renderAll();
   toast(`Rolled forward to YA ${settings.ya} — upload the new year's TB, adjustments, premiums and lease GLs`);
 }
 
