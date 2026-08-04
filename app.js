@@ -34,7 +34,7 @@ const defaultSettings = {
   glTaxExpense: '700100',       // Income tax expense — current (P&L)
   glDeferredExpense: '700200',  // Deferred tax expense (P&L)
   glTaxPayable: '260100',       // Provision for income tax (balance sheet)
-  glDeferredBalance: '240100',  // Deferred tax liability / (asset) (balance sheet)
+  glDeferredBalance: '260400',  // Deferred tax liability / (asset) (balance sheet)
   glReval: '400300',            // Revaluation (FX) — balancing account for the current-tax reconciliation
   glBank: '100100',             // Bank / cash (for tax paid)
 };
@@ -170,6 +170,10 @@ function medicalAddback() { return Math.max(0, medicalExpensesTotal() - medicalC
    Returned as a payable (liability positive): a net debit balance in the TB
    (a receivable) is therefore negative. */
 function currentTaxAccounts() { return (settings.currentTaxCodes || '').split(',').map(s => s.trim()).filter(Boolean); }
+/* Financial-year labels derived from the Year of Assessment, so figures re-label
+   correctly when the provision is rolled forward (YA 2026 → FY26 / prior FY25). */
+function fyCur() { const n = Number(settings.ya); return isFinite(n) ? 'FY' + String(n % 100).padStart(2, '0') : 'current year'; }
+function fyPrior() { const n = Number(settings.ya); return isFinite(n) ? 'FY' + String((n - 1) % 100).padStart(2, '0') : 'prior year'; }
 function currentTaxPayableTB(which) {
   const tm = tbMap(), am = auditMap();
   const net = currentTaxAccounts().reduce((s, c) => { const rr = tm[c]; if (!rr) return s; return s + (which === 'opening' ? num(rr.opening) : num(rr.closing) + (am[c] || 0)); }, 0);
@@ -927,11 +931,11 @@ function buildJournals(P) {
       return lines;
     };
     const l26 = yearJournal(ctJournalFY26, 'Income tax expense — current year');
-    if (l26.length) js.push({ ref: 'CT-FY26', narrative: 'Current tax — FY26 (current year) provision (YA ' + s.ya + ')', lines: l26 });
+    if (l26.length) js.push({ ref: 'CT-' + fyCur(), narrative: 'Current tax — ' + fyCur() + ' (current year) provision (YA ' + s.ya + ')', lines: l26 });
     const l25 = yearJournal(ctJournalFY25, 'Income tax expense — (over)/under provision prior year');
-    if (l25.length) js.push({ ref: 'CT-FY25', narrative: 'Current tax — FY25 (prior year) provision / (over)under provision', lines: l25 });
+    if (l25.length) js.push({ ref: 'CT-' + fyPrior(), narrative: 'Current tax — ' + fyPrior() + ' (prior year) provision / (over)under provision', lines: l25 });
   } else if (Math.abs(P.currentTax) > 0.005) {
-    js.push({ ref: 'CT-FY26', narrative: 'Current year income tax provision — YA ' + s.ya, lines: [
+    js.push({ ref: 'CT-' + fyCur(), narrative: 'Current year income tax provision — YA ' + s.ya, lines: [
       dr(s.glTaxExpense, 'Income tax expense — current', P.currentTax),
       cr(s.glTaxPayable, 'Provision for income tax', P.currentTax),
     ] });
@@ -944,8 +948,8 @@ function buildJournals(P) {
       ? [dr(s.glDeferredExpense, 'Deferred tax expense', a), cr(s.glDeferredBalance, 'Deferred tax liability/(asset)', a)]
       : [dr(s.glDeferredBalance, 'Deferred tax liability/(asset)', a), cr(s.glDeferredExpense, 'Deferred tax expense', a)] });
   };
-  dtJournal(P.deferredCY, 'DT-FY26', 'Deferred tax — FY26 (current year) origination/reversal of temporary differences');
-  dtJournal(P.deferredPriorYr, 'DT-FY25', 'Deferred tax — FY25 (prior year) under/over provision');
+  dtJournal(P.deferredCY, 'DT-' + fyCur(), 'Deferred tax — ' + fyCur() + ' (current year) origination/reversal of temporary differences');
+  dtJournal(P.deferredPriorYr, 'DT-' + fyPrior(), 'Deferred tax — ' + fyPrior() + ' (prior year) under/over provision');
   return js;
 }
 
@@ -961,16 +965,17 @@ function currentTaxRollupHtml(P) {
     const expected = c => expectedTaxByAccount(c, P);               // provision closing (current + prior accrual)
     const journal = c => expected(c) - tbStat(c);                   // journal to post (provision adjustment)
     const nm = c => { const r = tm[c]; return r ? r.name : c; };
+    const cur = fyCur(), pri = fyPrior();
     const rowsDef = [
       { label: 'Opening balance', fn: opening, bold: true },
-      { label: 'FY25 movement (prior year, per ledger)', fn: fy25 },
-      { label: 'FY26 movement (current year accrual, per ledger)', fn: fy26 },
+      { label: `${pri} movement (prior year, per ledger)`, fn: fy25 },
+      { label: `${cur} movement (current year accrual, per ledger)`, fn: fy26 },
       { label: 'Closing per TB + stat adjustments', fn: tbStat, bold: true },
-      { label: 'Expected — FY26 (current year)', fn: c => fy26TaxByAccount(c, P) },
-      { label: 'Expected — FY25 (prior year)', fn: c => fy25TaxByAccount(c) },
+      { label: `Expected — ${cur} (current year)`, fn: c => fy26TaxByAccount(c, P) },
+      { label: `Expected — ${pri} (prior year)`, fn: c => fy25TaxByAccount(c) },
       { label: 'Expected closing (provision)', fn: expected, bold: true },
-      { label: 'Journal — FY26 (current year) = Expected FY26 − FY26 movement', fn: c => ctJournalFY26(c, P) },
-      { label: 'Journal — FY25 (prior year) = Expected FY25 − (Opening + FY25 movement)', fn: c => ctJournalFY25(c, P) },
+      { label: `Journal — ${cur} (current year) = Expected ${cur} − ${cur} movement`, fn: c => ctJournalFY26(c, P) },
+      { label: `Journal — ${pri} (prior year) = Expected ${pri} − (Opening + ${pri} movement)`, fn: c => ctJournalFY25(c, P) },
       { label: 'Journal to post (total)', fn: journal, bold: true },
     ];
     const th = accts.map(c => `<th class="num" title="${attr(nm(c))}">${esc(c)}</th>`).join('');
@@ -982,14 +987,14 @@ function currentTaxRollupHtml(P) {
     }).join('');
     return `<div class="card">
       <h3 style="margin:0 0 2px">Current tax — provision roll-forward by account</h3>
-      <div class="note-sub" style="color:var(--muted);font-size:0.82rem;margin-bottom:10px">Opening + FY25 + FY26 (per ledger) = closing per TB + stat; the expected provision differs by the journal to post. Ledger sign — a payable (credit) is in parentheses.</div>
+      <div class="note-sub" style="color:var(--muted);font-size:0.82rem;margin-bottom:10px">Opening + ${pri} + ${cur} (per ledger) = closing per TB + stat; the expected provision differs by the journal to post. Ledger sign — a payable (credit) is in parentheses.</div>
       <div class="table-wrap"><table>
         <thead><tr><th>Movement</th>${th}<th class="num">Total</th></tr></thead>
         <tbody>${body}</tbody>
       </table></div>
-      <p class="legend">FY26 = the current-year accrual actually booked (income tax expense ${fmt(-ledgerFY26)}); FY25 = the prior-year movement in the ledger. Reval is already removed via the stat adjustment.<br>
-      <strong>Journal — FY26</strong> = Expected FY26 − FY26 movement (the current-year top-up: correct charge ${fmt(P.currentTax)} − booked ${fmt(-ledgerFY26)}).<br>
-      <strong>Journal — FY25</strong> = Expected FY25 − (Opening + FY25 movement) (the prior-year true-up). Both post as CT-FY26 / CT-FY25 in the Journals tab.</p>
+      <p class="legend">${cur} = the current-year accrual actually booked (income tax expense ${fmt(-ledgerFY26)}); ${pri} = the prior-year movement in the ledger. Reval is already removed via the stat adjustment.<br>
+      <strong>Journal — ${cur}</strong> = Expected ${cur} − ${cur} movement (the current-year top-up: correct charge ${fmt(P.currentTax)} − booked ${fmt(-ledgerFY26)}).<br>
+      <strong>Journal — ${pri}</strong> = Expected ${pri} − (Opening + ${pri} movement) (the prior-year true-up). Both post as CT-${cur} / CT-${pri} in the Journals tab.</p>
     </div>`;
 }
 
@@ -1485,6 +1490,7 @@ function wire() {
     loadSample(); saveSettings(); saveProvision(); renderAll(); toast('Sample loaded');
   });
   $('#btn-restore').addEventListener('click', () => { restoreSampleLines(); renderAll(); toast('Automated lines restored'); });
+  const rf = $('#btn-rollforward'); if (rf) rf.addEventListener('click', rollForwardYear);
   $('#btn-clear').addEventListener('click', () => {
     if (!confirm('Clear all provision data from this browser?')) return;
     localStorage.removeItem(STORE_KEY); localStorage.removeItem(SETTINGS_KEY); localStorage.removeItem(PREMDOC_KEY);
@@ -1492,6 +1498,61 @@ function wire() {
     settings = Object.assign({}, defaultSettings); provision = emptyProvision();
     renderAll(); toast('Cleared');
   });
+}
+
+/* Roll the provision forward to the next Year of Assessment. Balance-sheet
+   closing balances (after audit/stat adjustments) become the new opening; P&L
+   accounts reset to zero; the year just closed becomes the prior-year reference
+   for the current-tax note; one-time overrides and current-year inputs clear.
+   A JSON backup of the closing year downloads first. Upload the new year's TB,
+   stat adjustments, premiums and lease GLs to populate actuals (see Instructions). */
+function rollForwardYear() {
+  const oldYa = String(settings.ya || '');
+  const nextYa = /^\d{4}$/.test(oldYa) ? String(Number(oldYa) + 1) : oldYa;
+  if (!confirm(`Roll forward to YA ${nextYa}?\n\n• Closing balances carry into the new year as opening balances\n• P&L and current-year inputs reset\n• YA ${oldYa} becomes the prior-year reference\n\nA JSON backup of YA ${oldYa} downloads first.`)) return;
+
+  // Back up the closing year.
+  download(`tax-provision-ya${oldYa || 'current'}.json`, JSON.stringify({ settings, provision }, null, 2), 'application/json');
+
+  // Snapshot figures from the closing year before mutating.
+  const am = auditMap();
+  const P = recompute();
+  const adjClose = code => { const a = provision.tb.find(x => String(x.code) === String(code)); return (a ? num(a.closing) : 0) + (am[String(code)] || 0); };
+
+  // Current-tax prior-year reference = the balances still on the balance sheet.
+  const priorByAcct = {};
+  currentTaxAccounts().forEach(c => { priorByAcct[c] = round2(adjClose(c)); });
+  const priorCarried = round2(currentTaxPayableTB('closing'));
+
+  // Roll the TB: balance-sheet accounts carry (adjusted closing → opening),
+  // P&L accounts (4/5/6/7) reset to zero for the new year.
+  provision.tb = provision.tb.map(a => {
+    const pl = /^[4567]/.test(String(a.code));
+    const open = pl ? 0 : round2(num(a.closing) + (am[String(a.code)] || 0));
+    return Object.assign({}, a, { opening: open, debit: 0, credit: 0, closing: open });
+  });
+
+  // Clear the closed year's inputs; keep the structure (linked lines, GL codes).
+  provision.auditAdjustments = [];
+  provision.insurancePremiums = provision.insurancePremiums.map(p => Object.assign({}, p, { amount: 0 }));
+  provision.deferredItems = provision.deferredItems.map(d =>
+    d.source === 'tb' ? Object.assign({}, d, { openingTD: '' })
+                      : Object.assign({}, d, { openingTD: round2(num(d.closingTD)) }));
+  provision.profitBeforeTax = 0;
+  provision.lossesBroughtForward = round2(P.lossesCF || 0);   // carry unutilised losses forward
+  provision.foreignTaxCredits = 0;
+  provision.priorTaxByAccount = priorByAcct;
+  provision.priorYearProvisionCarried = priorCarried;
+  provision.priorYearAdjustment = 0;
+  provision.openingCurrentTaxPayable = 0;
+  provision.taxPaid = 0;
+
+  // Advance the year and basis period.
+  if (/^\d{4}$/.test(oldYa)) settings.ya = nextYa;
+  if (settings.periodEnd) { const d = String(settings.periodEnd).split('-'); if (d.length === 3 && /^\d{4}$/.test(d[0])) settings.periodEnd = (Number(d[0]) + 1) + '-' + d[1] + '-' + d[2]; }
+
+  saveSettings(); saveProvision(); renderAll();
+  toast(`Rolled forward to YA ${settings.ya} — upload the new year's TB, adjustments, premiums and lease GLs`);
 }
 
 function readJson(e, cb) {
@@ -1542,6 +1603,7 @@ function restoreSampleLines() {
   saveProvision();
 }
 if (settings.glTaxPayable === '250650') { settings.glTaxPayable = '260100'; saveSettings(); } // fix old placeholder code
+if (settings.glDeferredBalance === '240100') { settings.glDeferredBalance = '260400'; saveSettings(); } // deferred tax posts to 260400 (240100 does not exist)
 const HEAL_KEY = 'taxprov.heal.v6';
 if (localStorage.getItem(INIT_KEY) && !localStorage.getItem(HEAL_KEY)) {
   restoreSampleLines();  // existing sessions: top up standard lines lost to earlier ✕ deletes
