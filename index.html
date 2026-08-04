@@ -56,7 +56,7 @@
     <!-- Trial balance -->
     <section class="view" id="view-tb">
       <div class="view-head">
-        <div><h2>Trial balance</h2><div class="desc">GL accounts sorted by number. Add-backs and deductions link to these accounts (in Current Tax) and pull the <em>adjusted</em> closing balance.</div></div>
+        <div><h2>Trial balance</h2><div class="desc">GL accounts sorted by number. <em>Adjusted</em> = closing + audit/stat adjustments; <em>Tax jnls</em> = the provision journals (Journals tab) posted per account; <em>Final</em> = adjusted + tax journals — the post-provision TB the tax note ties to.</div></div>
         <div class="toolbar">
           <input type="search" id="tb-search" placeholder="Filter account / name&hellip;">
           <button id="btn-tb-edit">Edit</button>
@@ -70,12 +70,12 @@
       <div class="table-wrap">
         <table>
           <colgroup>
-            <col class="c-code"><col><col class="c-num"><col class="c-num"><col class="c-num"><col class="c-num"><col class="c-num"><col class="c-num"><col class="c-act">
+            <col class="c-code"><col><col class="c-num"><col class="c-num"><col class="c-num"><col class="c-num"><col class="c-num"><col class="c-num"><col class="c-num"><col class="c-num"><col class="c-act">
           </colgroup>
           <thead><tr>
             <th>Account</th><th>Name</th>
             <th class="num">Opening</th><th class="num">Debit</th><th class="num">Credit</th><th class="num">Closing</th>
-            <th class="num">Audit adj.</th><th class="num">Adjusted</th><th></th>
+            <th class="num">Audit adj.</th><th class="num">Adjusted</th><th class="num">Tax jnls</th><th class="num">Final</th><th></th>
           </tr></thead>
           <tbody id="tb-body"></tbody>
           <tfoot id="tb-foot"></tfoot>
@@ -302,6 +302,6 @@
   <script src="far-import.js?v=1"></script>
   <script src="tb-aus155.js?v=2"></script>
   <script src="sample-data.js?v=10"></script>
-  <script src="app.js?v=33"></script>
+  <script src="app.js?v=34"></script>
 </body>
 </html>

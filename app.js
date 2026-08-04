@@ -340,7 +340,15 @@ function recompute() {
   const deferredPriorYr = priorTD * r;            // prior-year deferred (under/over provision)
   const deferredCY = deferredCharge - deferredPriorYr; // current-year deferred tax to P&L
 
-  const priorAdj = num(p.priorYearAdjustment);
+  // Prior-year (over)/under provision of current tax — the P&L effect of the FY25
+  // journal that trues the current-tax balances up to the expected prior-year
+  // position (its balancing entry posts to income tax expense). Deriving it here
+  // makes the Tax Note, ETR reconciliation and Dashboard tie to the final
+  // (post-provision) trial balance without a manual entry.
+  const priorCurrentAdj = hasCurrentTaxTB()
+    ? -currentTaxAccounts().reduce((s, c) => s + ctJournalFY25(c), 0)
+    : 0;
+  const priorAdj = priorCurrentAdj + num(p.priorYearAdjustment);
   const priorYearProvision = priorAdj + deferredPriorYr;  // total prior-year (over)/under provision
   const currentTaxExpense = currentTax + priorAdj;
   const totalTaxExpense = currentTaxExpense + deferredCharge;
@@ -435,9 +443,22 @@ function money(v) {
 /* ----- Trial balance ----- */
 let tbFilter = '';
 let tbEdit = false;
+/* Net tax-provision journal per account (debit positive) — the Journals tab
+   posted against the trial balance, so the TB can show adjusted → final. */
+function taxJournalMap(P) {
+  const m = {};
+  buildJournals(P || recompute()).forEach(j => j.lines.forEach(l => {
+    const k = String(l.account);
+    m[k] = (m[k] || 0) + num(l.dr) - num(l.cr);
+  }));
+  return m;
+}
+
 function renderTB() {
   const body = $('#tb-body');
   const am = auditMap();
+  const tjm = taxJournalMap();
+  const taxj = code => tjm[String(code)] || 0;
   const q = tbFilter.trim().toLowerCase();
   const eb = $('#btn-tb-edit'); if (eb) { eb.textContent = tbEdit ? 'Done' : 'Edit'; eb.classList.toggle('primary', tbEdit); }
   // Keep original indices so edits map back, but display sorted by account number.
@@ -446,9 +467,9 @@ function renderTB() {
     .filter(({ a }) => !q || String(a.code).toLowerCase().includes(q) || String(a.name).toLowerCase().includes(q));
 
   if (!provision.tb.length) {
-    body.innerHTML = `<tr class="empty-row"><td colspan="9">No accounts. Add one, import a CSV, load the sample, or pull from FAR in Data &amp; Settings.</td></tr>`;
+    body.innerHTML = `<tr class="empty-row"><td colspan="11">No accounts. Add one, import a CSV, load the sample, or pull from FAR in Data &amp; Settings.</td></tr>`;
   } else if (!rows.length) {
-    body.innerHTML = `<tr class="empty-row"><td colspan="9">No accounts match “${esc(tbFilter)}”.</td></tr>`;
+    body.innerHTML = `<tr class="empty-row"><td colspan="11">No accounts match “${esc(tbFilter)}”.</td></tr>`;
   } else if (tbEdit) {
     body.innerHTML = rows.map(({ a, i }) => {
       const adjusted = num(a.closing) + (am[String(a.code)] || 0);
@@ -461,6 +482,8 @@ function renderTB() {
         <td class="num"><input class="amt" type="number" step="0.01" data-key="closing" value="${a.closing}"></td>
         <td class="num">${money(am[String(a.code)] || 0)}</td>
         <td class="num">${money(adjusted)}</td>
+        <td class="num">${money(taxj(a.code))}</td>
+        <td class="num">${money(adjusted + taxj(a.code))}</td>
         <td class="act"><button class="ghost sm" data-act="del-line" title="Remove">&times;</button></td>
       </tr>`;
     }).join('');
@@ -468,11 +491,12 @@ function renderTB() {
     body.innerHTML = rows.map(({ a, i }) => {
       const adj = am[String(a.code)] || 0;
       const adjusted = num(a.closing) + adj;
+      const tj = taxj(a.code);
       const c = (v) => `<td class="num" title="${exact(v)}">${money(v)}</td>`;
       return `<tr data-line="tb" data-idx="${i}">
         <td class="tb-code">${esc(a.code)}</td>
         <td class="tb-name" title="${attr(a.name)}">${esc(a.name)}</td>
-        ${c(a.opening)}${c(a.debit)}${c(a.credit)}${c(a.closing)}${c(adj)}${c(adjusted)}
+        ${c(a.opening)}${c(a.debit)}${c(a.credit)}${c(a.closing)}${c(adj)}${c(adjusted)}${c(tj)}${c(adjusted + tj)}
         <td class="act"></td>
       </tr>`;
     }).join('');
@@ -480,10 +504,13 @@ function renderTB() {
   const t = k => sum(provision.tb, k);
   const adjTot = Object.values(am).reduce((s, v) => s + v, 0);
   const closeTot = t('closing');
+  const tbCodes = new Set(provision.tb.map(a => String(a.code)));
+  const taxJnlTot = Object.keys(tjm).reduce((s, k) => s + (tbCodes.has(k) ? tjm[k] : 0), 0);
   $('#tb-foot').innerHTML = `<tr>
     <td colspan="2">Total (${provision.tb.length} accounts${q ? `, ${rows.length} shown` : ''})</td>
     <td class="num">${money(t('opening'))}</td><td class="num">${money(t('debit'))}</td><td class="num">${money(t('credit'))}</td>
-    <td class="num">${money(closeTot)}</td><td class="num">${money(adjTot)}</td><td class="num">${money(closeTot + adjTot)}</td><td></td></tr>`;
+    <td class="num">${money(closeTot)}</td><td class="num">${money(adjTot)}</td><td class="num">${money(closeTot + adjTot)}</td>
+    <td class="num">${money(taxJnlTot)}</td><td class="num">${money(closeTot + adjTot + taxJnlTot)}</td><td></td></tr>`;
 
   // Profit per the trial balance (adjusted closing balances of P&L accounts 4/5/6/7).
   // Income carries a credit (negative) closing and expenses/tax a debit (positive),
@@ -987,7 +1014,7 @@ function renderNotes(P) {
   $('#notes-wrap').innerHTML = `
   <div class="note-block">
     <h3>Income tax expense</h3>
-    <div class="note-sub">For YA ${esc(settings.ya)} — amounts in ${esc(cur)}</div>
+    <div class="note-sub">For YA ${esc(settings.ya)} — amounts in ${esc(cur)}. Ties to the final trial balance (accounts ${esc(settings.glTaxExpense)} + ${esc(settings.glDeferredExpense)} after the tax provision journals).</div>
     <div class="table-wrap"><table class="comp-table"><tbody>
       <tr class="section"><td colspan="2">Current tax</td></tr>
       <tr><td class="label">Current year</td><td class="num">${acc(P.currentTax)}</td></tr>
@@ -1142,9 +1169,10 @@ function importTbCsv(rows) {
 }
 function exportTbCsv() {
   const am = auditMap();
-  const rows = [['Code', 'Name', 'Opening', 'Debit', 'Credit', 'Closing', 'Audit adj', 'Adjusted closing']];
+  const tjm = taxJournalMap();
+  const rows = [['Code', 'Name', 'Opening', 'Debit', 'Credit', 'Closing', 'Audit adj', 'Adjusted closing', 'Tax journals', 'Final']];
   provision.tb.slice().sort((a, b) => String(a.code).localeCompare(String(b.code), undefined, { numeric: true }))
-    .forEach(a => { const adj = am[String(a.code)] || 0; rows.push([a.code, a.name, round2(a.opening), round2(a.debit), round2(a.credit), round2(a.closing), round2(adj), round2(num(a.closing) + adj)]); });
+    .forEach(a => { const adj = am[String(a.code)] || 0; const tj = tjm[String(a.code)] || 0; const adjusted = num(a.closing) + adj; rows.push([a.code, a.name, round2(a.opening), round2(a.debit), round2(a.credit), round2(a.closing), round2(adj), round2(adjusted), round2(tj), round2(adjusted + tj)]); });
   download(`trial-balance-ya${settings.ya}.csv`, toCsv(rows), 'text/csv');
 }
 /* Import a transfer-pricing / statutory adjustment file. It is multi-entity;
