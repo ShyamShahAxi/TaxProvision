@@ -48,6 +48,10 @@ body {
 }
 .year-switch select option { color: var(--ink); }
 
+/* Locked (finalised) year — grey out editable controls; viewing/export stay on */
+body.locked .view input, body.locked .view select, body.locked .view textarea { background: #f1f5f9; color: var(--muted); cursor: not-allowed; }
+body.locked .view .act button, body.locked .view button.sm.primary, body.locked .view button.primary:not(#btn-rollforward):not(#btn-export-json):not(#btn-lock) { opacity: 0.5; }
+
 .tabs {
   display: flex;
   gap: 4px;
