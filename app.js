@@ -974,10 +974,15 @@ function exportJournalsCsv(P) {
 function renderNotes(P) {
   const cur = settings.currency;
   const recon = reconLines(P);
-  const dtRows = provision.deferredItems.map(x =>
-    `<tr><td>${esc(x.label || '—')}</td><td class="num note-num">${acc(num(x.openingTD) * P.r)}</td>` +
-    `<td class="num note-num">${acc((num(x.closingTD) - num(x.openingTD)) * P.r)}</td>` +
-    `<td class="num note-num">${acc(num(x.closingTD) * P.r)}</td></tr>`).join('');
+  // Per-component balances use the same computed temporary differences as the
+  // totals (defTD resolves TB-linked accounts and any opening override), so the
+  // rows add up to the opening / movement / closing totals below.
+  const dtRows = provision.deferredItems.map(x => {
+    const op = defTD(x, 'opening') * P.r, cl = defTD(x, 'closing') * P.r;
+    return `<tr><td>${esc(x.label || '—')}</td><td class="num note-num">${acc(op)}</td>` +
+      `<td class="num note-num">${acc(cl - op)}</td>` +
+      `<td class="num note-num">${acc(cl)}</td></tr>`;
+  }).join('');
 
   $('#notes-wrap').innerHTML = `
   <div class="note-block">
