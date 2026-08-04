@@ -183,6 +183,14 @@ function fy26TaxByAccount(code, P) { return code === (settings.glTaxPayable || '
 function fy25TaxByAccount(code) { const m = provision.priorTaxByAccount || {}; return num(m[code] || 0); }
 function expectedTaxByAccount(code, P) { return fy26TaxByAccount(code, P) + fy25TaxByAccount(code); }
 function afterStatByAccount(code, tm, am) { const r = (tm || tbMap())[code]; return (r ? num(r.closing) : 0) + ((am || auditMap())[code] || 0); }
+function tbOpeningOf(code) { const r = tbMap()[code]; return r ? num(r.opening) : 0; }
+/* Split the current-tax roll-forward and journal by year. FY26 (current year) is
+   the accrual actually booked (income tax expense); FY25 (prior year) is the
+   remaining ledger movement. Journals bring each to the expected provision. */
+function ctFY26Ledger(code) { return code === (settings.glTaxPayable || '260100') ? -afterStatByAccount(settings.glTaxExpense) : 0; }
+function ctFY25Ledger(code) { return afterStatByAccount(code) - tbOpeningOf(code) - ctFY26Ledger(code); }
+function ctJournalFY26(code, P) { return fy26TaxByAccount(code, P) - ctFY26Ledger(code); }
+function ctJournalFY25(code, P) { return fy25TaxByAccount(code) - (tbOpeningOf(code) + ctFY25Ledger(code)); }
 
 /* Profit before tax per the trial balance (adjusted closing balances of P&L
    accounts 4/5/6/7). Income carries a credit closing and expenses/tax a debit,
@@ -875,30 +883,36 @@ function buildJournals(P) {
   const js = [];
 
   // Current tax — post the provision adjustment (expected − ledger) to the real
-  // tax accounts, balancing to income tax expense. FX revaluation is already in
-  // the ledger / stat adjustment and is not re-journalled.
+  // tax accounts, split into FY26 (current-year) and FY25 (prior-year) journals,
+  // each balancing to income tax expense. FX revaluation is already in the ledger.
   if (hasCurrentTaxTB()) {
-    const tm = tbMap(), am = auditMap();
-    const lines = []; let net = 0;
-    currentTaxAccounts().forEach(c => {
-      const r = tm[c]; const j = expectedTaxByAccount(c, P) - afterStatByAccount(c, tm, am);
-      if (Math.abs(j) > 0.005) { lines.push(j > 0 ? dr(c, r ? r.name : '', j) : cr(c, r ? r.name : '', -j)); net += j; }
-    });
-    if (Math.abs(net) > 0.005) lines.push(net < 0 ? dr(s.glTaxExpense, 'Income tax expense', -net) : cr(s.glTaxExpense, 'Income tax expense', net));
-    if (lines.length) js.push({ ref: 'CT-1', narrative: 'Current tax — provision adjustment to expected closing (YA ' + s.ya + ')', lines });
+    const tm = tbMap();
+    const yearJournal = (jf, expenseLabel) => {
+      const lines = []; let net = 0;
+      currentTaxAccounts().forEach(c => { const r = tm[c]; const j = jf(c, P); if (Math.abs(j) > 0.005) { lines.push(j > 0 ? dr(c, r ? r.name : '', j) : cr(c, r ? r.name : '', -j)); net += j; } });
+      if (Math.abs(net) > 0.005) lines.push(net < 0 ? dr(s.glTaxExpense, expenseLabel, -net) : cr(s.glTaxExpense, expenseLabel, net));
+      return lines;
+    };
+    const l26 = yearJournal(ctJournalFY26, 'Income tax expense — current year');
+    if (l26.length) js.push({ ref: 'CT-FY26', narrative: 'Current tax — FY26 (current year) provision (YA ' + s.ya + ')', lines: l26 });
+    const l25 = yearJournal(ctJournalFY25, 'Income tax expense — (over)/under provision prior year');
+    if (l25.length) js.push({ ref: 'CT-FY25', narrative: 'Current tax — FY25 (prior year) provision / (over)under provision', lines: l25 });
   } else if (Math.abs(P.currentTax) > 0.005) {
-    js.push({ ref: 'CT-1', narrative: 'Current year income tax provision — YA ' + s.ya, lines: [
+    js.push({ ref: 'CT-FY26', narrative: 'Current year income tax provision — YA ' + s.ya, lines: [
       dr(s.glTaxExpense, 'Income tax expense — current', P.currentTax),
       cr(s.glTaxPayable, 'Provision for income tax', P.currentTax),
     ] });
   }
-  if (Math.abs(P.deferredCharge) > 0.005) {
-    const a = Math.abs(P.deferredCharge);
-    const charge = P.deferredCharge > 0; // increase in net deferred tax liability
-    js.push({ ref: 'DT-1', narrative: 'Deferred tax ' + (charge ? 'charge' : 'credit') + ' — origination/reversal of temporary differences', lines: charge
+  // Deferred tax — split current year (P&L) and prior year (under/over provision).
+  const dtJournal = (amt, ref, narrative) => {
+    if (Math.abs(amt) <= 0.005) return;
+    const a = Math.abs(amt), charge = amt > 0;
+    js.push({ ref, narrative, lines: charge
       ? [dr(s.glDeferredExpense, 'Deferred tax expense', a), cr(s.glDeferredBalance, 'Deferred tax liability/(asset)', a)]
       : [dr(s.glDeferredBalance, 'Deferred tax liability/(asset)', a), cr(s.glDeferredExpense, 'Deferred tax expense', a)] });
-  }
+  };
+  dtJournal(P.deferredCY, 'DT-FY26', 'Deferred tax — FY26 (current year) origination/reversal of temporary differences');
+  dtJournal(P.deferredPriorYr, 'DT-FY25', 'Deferred tax — FY25 (prior year) under/over provision');
   return js;
 }
 
@@ -920,8 +934,12 @@ function renderJournals(P) {
       { label: 'FY25 movement (prior year, per ledger)', fn: fy25 },
       { label: 'FY26 movement (current year accrual, per ledger)', fn: fy26 },
       { label: 'Closing per TB + stat adjustments', fn: tbStat, cls: 'subtotal' },
-      { label: 'Expected closing (provision)', fn: expected },
-      { label: 'Journal to post (provision adjustment)', fn: journal, cls: 'grand' },
+      { label: 'Expected — FY26 (current year)', fn: c => fy26TaxByAccount(c, P) },
+      { label: 'Expected — FY25 (prior year)', fn: c => fy25TaxByAccount(c) },
+      { label: 'Expected closing (provision)', fn: expected, cls: 'subtotal' },
+      { label: 'Journal — FY26 (current year)', fn: c => ctJournalFY26(c, P) },
+      { label: 'Journal — FY25 (prior year)', fn: c => ctJournalFY25(c, P) },
+      { label: 'Journal to post (total)', fn: journal, cls: 'grand' },
     ];
     const th = accts.map(c => `<th class="num" title="${attr(nm(c))}">${esc(c)}</th>`).join('');
     const body = rowsDef.map(r => {
