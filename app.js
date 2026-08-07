@@ -12,6 +12,7 @@ const STORE_KEY = 'taxprov.provision.v1';
 const SETTINGS_KEY = 'taxprov.settings.v1';
 const PREMDOC_KEY = 'taxprov.premiumDoc.v1'; // attached insurer invoice (PDF), kept out of the JSON backup
 const YEARS_KEY = 'taxprov.years.v1';        // archive of {settings,provision} per Year of Assessment, for the header year switcher
+const ENTITIES_KEY = 'taxprov.entities.v1';  // archive of {settings,provision,years} per entity, for the header entity switcher
 
 /* ---------- Settings ---------- */
 const defaultSettings = {
@@ -105,6 +106,60 @@ function switchYear(ya) {
   provision = Object.assign(emptyProvision(), saved.provision);
   saveSettings(); saveProvision(); renderAll();
   toast('Switched to YA ' + settings.ya);
+}
+
+/* ---------- Multi-entity archive (header entity switcher) ----------
+   Each entity (e.g. AUS155 Singapore, AUS501 UK) keeps its own settings,
+   provision and year archive. The active entity lives in the working copy
+   (STORE_KEY/SETTINGS_KEY/YEARS_KEY); others are archived under ENTITIES_KEY and
+   snapshotted only when leaving. settings.entity is the entity code (also used to
+   filter the stat-adjustment import). */
+const BUNDLED_ENTITIES = ['AUS155', 'AUS501'];
+function loadEntities() { try { return JSON.parse(localStorage.getItem(ENTITIES_KEY)) || {}; } catch (e) { return {}; } }
+function saveEntities(e) { localStorage.setItem(ENTITIES_KEY, JSON.stringify(e)); }
+function snapshotActiveEntity() {
+  snapshotActiveYear();                       // fold the current year into YEARS_KEY first
+  const store = loadEntities();
+  store[String(settings.entity)] = {
+    settings: JSON.parse(JSON.stringify(settings)),
+    provision: JSON.parse(JSON.stringify(provision)),
+    years: loadYears(),
+  };
+  saveEntities(store);
+}
+function availableEntities() {
+  const set = new Set(Object.keys(loadEntities()));
+  BUNDLED_ENTITIES.forEach(c => set.add(c));
+  if (settings.entity) set.add(String(settings.entity));
+  return [...set].filter(Boolean).sort();
+}
+/* UK (AUS501) settings profile: 25% corporation tax, no partial exemption, no
+   Singapore medical cap; capital allowances / deferred tax come from the AUS501
+   FAR pool. Stat adjustments read only entity AUS501's rows. */
+function ukSettings() {
+  return Object.assign({}, defaultSettings, {
+    companyName: 'CB Financial Services Limited (UK) — AUS501',
+    currency: '$', entity: 'AUS501', ya: '2026', periodEnd: '2026-06-30',
+    taxRate: 25, exemption: 'none', rebatePct: 0, rebateCap: 0,
+    capRate: 0, sgdRate: 1,
+  });
+}
+function switchEntity(code) {
+  code = String(code);
+  if (code === String(settings.entity)) return;
+  snapshotActiveEntity();
+  const store = loadEntities();
+  let e = store[code];
+  if (!e) {  // first time on this entity — create a shell
+    e = code === 'AUS501'
+      ? { settings: ukSettings(), provision: emptyProvision(), years: {} }
+      : { settings: Object.assign({}, defaultSettings, { entity: code }), provision: emptyProvision(), years: {} };
+  }
+  settings = Object.assign({}, defaultSettings, e.settings);
+  provision = Object.assign(emptyProvision(), e.provision);
+  saveYears(e.years || {});
+  saveSettings(); saveProvision(); renderAll();
+  toast('Switched to ' + code);
 }
 
 /* ---------- Helpers ---------- */
@@ -422,6 +477,7 @@ function renderAll() {
   if (banner) banner.innerHTML = provision.locked
     ? `<div class="banner warn" style="margin:0 0 16px">🔒 <strong>YA ${esc(settings.ya)} (${esc(fyCur())}) is locked</strong> — finalised; changes are blocked. Unlock in Data &amp; Settings to edit.</div>`
     : '';
+  renderEntitySelector();
   renderYearSelector();
   render();
 }
@@ -434,6 +490,13 @@ function renderYearSelector() {
     return `<option value="${attr(ya)}"${ya === cur ? ' selected' : ''}>YA ${esc(ya)}${fy}</option>`;
   }).join('');
   sel.innerHTML = opts + `<option value="__roll__">＋ Roll forward to next YA…</option>`;
+}
+
+function renderEntitySelector() {
+  const sel = $('#entity-select'); if (!sel) return;
+  const cur = String(settings.entity);
+  sel.innerHTML = availableEntities().map(c =>
+    `<option value="${attr(c)}"${c === cur ? ' selected' : ''}>${esc(c)}</option>`).join('');
 }
 
 function render() {
@@ -1161,25 +1224,68 @@ function renderData() {
 /* =============================================================
    FAR IMPORT
    ============================================================= */
+/* UK pooled capital allowances from a FAR backup: roll the AUS501 pool (main +
+   special) forward to the reporting FY using the backup's taxPool config and the
+   accounting capex, returning the reporting-year opening/closing tax WDV and the
+   allowances claimed. Mirrors the FAR's Tax Register pool. */
+function ukPoolFromFar(data) {
+  const s = data.settings || {}, tp = s.taxPool;
+  if (!tp || !num(tp.startFY)) return null;
+  const assets = data.assets || [];
+  const fem = num(s.fyEndMonth) || 6, fed = num(s.fyEndDay) || 30;
+  const pd = iso => { if (!iso) return null; const d = new Date(iso + 'T00:00:00'); return isNaN(d) ? null : d; };
+  const fyY = d => { const e = new Date(d.getFullYear(), fem - 1, fed); return d <= e ? d.getFullYear() : d.getFullYear() + 1; };
+  const repY = fyY(pd(s.reportingDate) || new Date());
+  const capGBP = num(s.aiaCapGBP), mr = num(tp.mainRate) / 100, sr = num(tp.specialRate) / 100;
+  const capexFor = y => {
+    let t = 0;
+    assets.forEach(a => {
+      const acq = pd(a.acquisitionDate); if (!acq || fyY(acq) !== y) return;
+      const cat = String(a.category || ''), w = String(a.wipCategory || '');
+      if (w.indexOf('150120') === 0 || cat.indexOf('150100') === 0 || cat.indexOf('140100') === 0)
+        t += num(a.purchaseCost) + num(a.installationCost) + num(a.otherCost);
+    });
+    return t;
+  };
+  let mo = num(tp.mainOpeningWDV), so = num(tp.specialOpeningWDV), row = null;
+  for (let y = num(tp.startFY); y <= repY; y++) {
+    const add = capexFor(y), rd = num((tp.rd || {})[y]), fx = num((tp.fx || {})[y]) || num(s.aiaFxRate) || 1;
+    const q = add - rd, aia = Math.min(capGBP * fx, Math.max(0, q));
+    const mbw = mo + q - aia, mwda = mr * Math.max(0, mbw), mc = mbw - mwda;
+    const swda = sr * Math.max(0, so), sc = so - swda;
+    row = { y, openWDV: mo + so, closeWDV: mc + sc, allowances: rd + aia + mwda + swda };
+    mo = mc; so = sc;
+  }
+  return row;
+}
+
 function applyFarImport(data) {
   const s = summarizeFarBackup(data);
+  const pool = (data.settings && data.settings.taxRegime === 'uk-pool') ? ukPoolFromFar(data) : null;
   provision.far = {
     companyName: s.companyName, reportingDate: s.reportingDate, priorDate: s.priorDate,
     assetCount: s.assetCount, closing: s.closing, opening: s.opening,
-    importedAt: new Date().toISOString(),
+    pool: pool || null, importedAt: new Date().toISOString(),
   };
   // Replace any previously imported FAR-sourced lines.
   provision.addBacks = provision.addBacks.filter(x => x.source !== 'far');
   provision.deductions = provision.deductions.filter(x => x.source !== 'far');
   provision.deferredItems = provision.deferredItems.filter(x => x.source !== 'far');
 
-  provision.addBacks.push({ id: uid(), label: 'Depreciation of property, plant & equipment (per FAR)', amount: round2(s.closing.acctDep), type: 'temporary', source: 'far' });
-  provision.deductions.push({ id: uid(), label: 'Capital allowances (per FAR)', amount: round2(s.closing.taxCA), type: 'temporary', source: 'far' });
-  provision.deferredItems.push({ id: uid(), label: 'Accelerated capital allowances (per FAR)', openingTD: round2(s.opening.td), closingTD: round2(s.closing.td), source: 'far' });
+  provision.addBacks.push({ id: uid(), label: 'Depreciation / amortisation of fixed assets (per FAR)', amount: round2(s.closing.acctDep), type: 'temporary', source: 'far' });
+  if (pool) {
+    // UK: capital allowances and the deferred temporary difference come from the pool.
+    provision.deductions.push({ id: uid(), label: 'Capital allowances — UK pool: WDA / AIA / R&D (per FAR)', amount: round2(pool.allowances), type: 'temporary', source: 'far' });
+    provision.deferredItems.push({ id: uid(), label: 'Plant & machinery — accounting NBV vs tax pool WDV (per FAR)', openingTD: round2(s.opening.nbv - pool.openWDV), closingTD: round2(s.closing.nbv - pool.closeWDV), source: 'far' });
+  } else {
+    // Singapore: per-asset capital allowances and accelerated-allowance difference.
+    provision.deductions.push({ id: uid(), label: 'Capital allowances (per FAR)', amount: round2(s.closing.taxCA), type: 'temporary', source: 'far' });
+    provision.deferredItems.push({ id: uid(), label: 'Accelerated capital allowances (per FAR)', openingTD: round2(s.opening.td), closingTD: round2(s.closing.td), source: 'far' });
+  }
 
   saveProvision();
   renderAll();
-  toast('FAR register imported — ' + s.assetCount + ' assets');
+  toast('FAR register imported — ' + s.assetCount + ' assets' + (pool ? ' (UK pool)' : ''));
 }
 function round2(v) { return Math.round(num(v) * 100) / 100; }
 
@@ -1570,6 +1676,7 @@ function wire() {
     if (v === '__roll__') { rollForwardYear(); renderYearSelector(); }
     else switchYear(v);
   });
+  const es = $('#entity-select'); if (es) es.addEventListener('change', e => switchEntity(e.target.value));
   $('#btn-clear').addEventListener('click', () => {
     if (!confirm('Clear all provision data from this browser?')) return;
     localStorage.removeItem(STORE_KEY); localStorage.removeItem(SETTINGS_KEY); localStorage.removeItem(PREMDOC_KEY);
