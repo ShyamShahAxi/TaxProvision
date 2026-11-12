@@ -36,6 +36,45 @@ Like FAR, it is a single static web app — no server, no build step, no depende
 
 > The bundled sample is the real **AxiCorp Pte Ltd (Singapore), AUS155, YA 2026** computation transcribed from the FY26 workpaper: profit before tax **317,389**, permanent differences **93,206**, net temporary differences **396,733**, tying to chargeable income before exemption of **807,328**. Confirm every treatment against current Singapore tax legislation before relying on the figures.
 
+## AUS135 — AXI Services (Cyprus) Limited
+
+Select **AUS135** in the header entity switcher. It loads two years, and **Data & Settings → Load AUS135** reloads them.
+
+**FY25 (3 Jun 2024 – 30 Jun 2025) is as filed and locked.** It reproduces BDO's corporation tax computation in the signed FS:
+
+| | US$ |
+|---|---|
+| Profit before tax | 233,711 |
+| Add-backs | 393,554 |
+| Deductions | (73,431) |
+| Chargeable income | 553,834 |
+| Tax at 12.5% | 69,229.25 |
+| 10% additional charge | 6,922.93 |
+| **Tax payable** | **76,152.18** |
+
+The tax payable ties to AJE 5. The TB is the Sage FY25 TB plus BDO's 12 adjusting entries, mapped to Sage accounts (NEW15→660120, NEW16→300100, BDO2→700100, BDO3→260100). No deferred tax was recognised, so none is recognised here.
+
+**FY26 (1 Jul 2025 – 30 Jun 2026) is the current year, with the true-ups.**
+- **TB:** the FY26 audit TB, with opening balances agreed to the FY25 signed accounts. Its 7 post-TB journals are audit adjustments, and PBT (385,873) links to the TB.
+- **Rate:** Cyprus taxes calendar years and the corporate rate rose to 15% from tax year 2026. FY26 is apportioned 50/50 (BDO's FY25 method), giving 13.75%.
+- **Deferred tax rate:** 15%, the rate enacted for reversal.
+- **Additional charge:** the 10% charge is kept.
+- **Wear and tear:** comes from the FAR at statutory rates, applied from FY25.
+- **Entertainment:** only the excess over the statutory cap is added back (9,120.36).
+- **FY25 recomputed (`aus135FY25Recompute`):** BDO's computation is corrected and the difference is trued up in FY26 through the CT-FY25 journal. Two corrections:
+  - "other non-allowable 12,106" = lease interest 11,310.19 + irrecoverable VAT 796 (matches to the dollar), both deductible;
+  - wear and tear is 4,230.40 at statutory rates, not book depreciation of 1,148.
+  The corrected tax is 74,063.77 against 76,152.18 booked, a 2,088.41 over-provision. The Tax note shows the reconciliation.
+- **Reseeding:** bump `AUS135_BUNDLE_VERSION` when the bundled data changes. Stored copies are then reseeded once.
+- **FX:** exempt both ways.
+- **Leases:** ROU depreciation is added back and lease principal deducted.
+- **Prior-year true-up:** the deferred tax BDO did not book at 30 Jun 2025 (IFRS 16 lease, net of the exempt FX on the lease liability) comes in as a **prior-year deferred movement**. FY25 itself is unchanged.
+
+New settings, all neutral by default so the other entities are unchanged:
+- **2nd tax-year rate** and **% of income in 2nd tax year**, for a financial year that straddles a rate change;
+- **Deferred tax rate**, the enacted rate if it differs from the current-tax rate;
+- **Additional charge %** on tax payable.
+
 ## FAR link
 
 Two ways to pull the register in, both under **Data & Settings → FAR link**:
