@@ -1244,29 +1244,83 @@ function withYear(ya, fn) {
 /* Closing current tax payable (liability +) after the provision journals. */
 function closingTaxPayable(P) { return num(provision.priorYearProvisionCarried) + P.currentTax + P.priorAdj - num(provision.taxPaid); }
 
-/* Prior-year current tax recomputed (provision.priorYearTrueUp): the corrected
-   computation against the amount booked, which drives the CT-prior journal. */
+/* Review of a closed year's filed computation (provision.bdoReview, shown on
+   that year's Tax note) and, in the following year, a short summary of the
+   resulting true-up (provision.priorYearTrueUp → CT-prior journal). */
 function trueUpBlock() {
-  const t = provision.priorYearTrueUp;
-  if (!t) return '';
-  if (!t.lines) return '';
+  const t = provision.bdoReview;
+  if (t && t.lines) return reviewBlock(t) + leaseReconBlock(provision.leaseRecon);
+  const u = provision.priorYearTrueUp;
+  if (!u) return '';
+  const r = (label, v, cls) => `<tr class="${cls || ''}"><td class="label">${esc(label)}</td><td class="num">${acc(v)}</td></tr>`;
+  return `<div class="note-block">
+    <h3>${esc(fyPrior())} current tax — true-up</h3>
+    <div class="note-sub">${esc(fyPrior())} is closed as signed. Its computation was reviewed and corrected (switch the year to ${esc(fyPrior())} → Tax note for the working); the difference is recognised here (journal CT-${esc(fyPrior())}).</div>
+    <div class="table-wrap"><table class="comp-table"><tbody>
+      ${r('Tax booked in ' + fyPrior(), u.filed)}
+      ${r('Tax per corrected computation', u.recomputed)}
+      ${r(u.diff < 0 ? 'Over-provision released' : 'Under-provision charged', u.diff, 'grand')}
+    </tbody></table></div>
+  </div>`;
+}
+const noteCell = note => note ? `<div class="dim" style="font-weight:400;white-space:normal;max-width:70ch;margin-top:2px">${esc(note)}</div>` : '';
+function reviewBlock(t) {
   const chip = st => st === 'ok' ? '<span class="pill green">Agreed</span>' : st === 'fix' ? '<span class="pill red">Corrected</span>' : '<span class="pill amber">To confirm</span>';
   const d = (a, b) => { const x = b - a; return Math.abs(x) < 0.005 ? '–' : acc(x); };
-  const row = (label, a, b, st, note, cls) => `<tr class="${cls || ''}"><td class="label">${esc(label)}${note ? `<div class="dim" style="font-weight:400;white-space:normal;max-width:70ch;margin-top:2px">${esc(note)}</div>` : ''}</td><td class="num">${acc(a)}</td><td class="num">${acc(b)}</td><td class="num">${d(a, b)}</td><td>${st ? chip(st) : ''}</td></tr>`;
+  const row = (label, a, b, st, note, cls) => `<tr class="${cls || ''}"><td class="label">${esc(label)}${noteCell(note)}</td><td class="num">${acc(a)}</td><td class="num">${acc(b)}</td><td class="num">${d(a, b)}</td><td>${st ? chip(st) : ''}</td></tr>`;
   const body = t.lines.map(l => l.sec ? `<tr class="section"><td colspan="5">${esc(l.sec)}</td></tr>` : row(l.label, l.bdo, l.cor, l.st, l.note)).join('');
-  const bdoTotal = t.bdoTax + t.bdoAddl;
   return `<div class="note-block">
-    <h3>${esc(fyPrior())} current tax recomputed — true-up in ${esc(fyCur())}</h3>
-    <div class="note-sub">${esc(fyPrior())} is closed as signed. BDO's computation of corporation tax (FS p.26) is checked line by line against the audited trial balance; the corrected tax less the tax booked is recognised in ${esc(fyCur())} as an (over)/under provision (journal CT-${esc(fyPrior())}).</div>
+    <h3>Computation of corporation tax — review</h3>
+    <div class="note-sub">BDO's computation (FS p.26) checked line by line against the audited trial balance. ${esc(fyCur())} stays as signed; the corrected tax less the tax booked is recognised in ${esc(t.trueUpIn)} (journal CT-${esc(fyCur())}).</div>
     <div class="table-wrap"><table class="comp-table">
       <thead><tr><th></th><th class="num">Per BDO</th><th class="num">Corrected</th><th class="num">Change</th><th>Status</th></tr></thead>
       <tbody>${body}
       ${row('Chargeable income', t.bdoCI, t.ci, '', '', 'subtotal')}
       ${row('Tax at ' + t.rate + '%', t.bdoTax, t.tax, '', '')}
       ${row(t.addlPct + '% additional charge', t.bdoAddl, t.addl, 'check', t.addlNote)}
-      ${row('Tax payable', bdoTotal, t.recomputed, '', '', 'grand')}
+      ${row('Tax payable', t.bdoTax + t.bdoAddl, t.recomputed, '', '', 'grand')}
     </tbody></table></div>
-    <p class="legend">Tax booked in ${esc(fyPrior())} (AJE 5) ${fmt(t.filed)} − corrected ${fmt(t.recomputed)} = <strong>${acc(t.diff)}</strong> ${t.diff < 0 ? 'over-provision released' : 'under-provision charged'} in ${esc(fyCur())}. BDO's figures are whole dollars, labelled € on its schedule but taken from the US$ accounts.</p>
+    <p class="legend">Tax booked (AJE 5) ${fmt(t.filed)} − corrected ${fmt(t.recomputed)} = <strong>${acc(t.diff)}</strong> ${t.diff < 0 ? 'over-provision released' : 'under-provision charged'} in ${esc(t.trueUpIn)}. BDO's figures are whole dollars, labelled € on its schedule but taken from the US$ accounts.</p>
+  </div>`;
+}
+/* IFRS 16 lease reconciliation (provision.leaseRecon): liability, rent paid,
+   tax adjustment (correct vs as filed) and the unbooked deferred tax. */
+function leaseReconBlock(L) {
+  if (!L) return '';
+  const r = (label, v, cls, note) => `<tr class="${cls || ''}"><td class="label">${esc(label)}${noteCell(note)}</td><td class="num">${acc(v)}</td></tr>`;
+  const t = (title, rows) => `<div class="table-wrap" style="margin-top:12px"><table class="comp-table"><thead><tr><th>${esc(title)}</th><th class="num">US$</th></tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
+  const liab = L.initial - L.principal, net = L.dep + L.interest - L.paid, bdoNet = L.dep + L.interest - L.bdoRent, td = L.rou - liab;
+  return `<div class="note-block">
+    <h3>IFRS 16 lease — reconciliation</h3>
+    <div class="note-sub">${esc(L.source)}</div>
+    ${t('Lease liability', [
+      r('Initial liability (Jan 2025)', L.initial),
+      r('Principal repaid Feb – Jun 2025', -L.principal),
+      r('Liability before FX', liab, 'subtotal'),
+      r('Unrealised FX on the EUR liability (AJE 12)', L.fx),
+      r('Lease liabilities per FS (note 19)', liab + L.fx, 'grand'),
+    ])}
+    ${t('Rent paid', [
+      r('Paid at commencement (Jan 2025), included in the ROU cost', L.prepaid),
+      r('Principal repaid Feb – Jun 2025', L.principal),
+      r('BDO "rent payments" (ROU cost 450,833 − liability before FX)', L.bdoRent, 'subtotal'),
+      r('Lease interest (680100)', L.interest),
+      r('Rent paid in cash', L.paid, 'grand'),
+    ])}
+    ${t('Tax adjustment', [
+      r('Add back ROU depreciation (670150)', L.dep),
+      r('Add back lease interest', L.interest),
+      r('Deduct rent paid', -L.paid),
+      r('Net add-back — correct', net, 'subtotal'),
+      r('Net add-back — BDO as filed', bdoNet, '', 'Depreciation 59,932 + interest 11,310 (in "other non-allowable") − rent 54,795.'),
+      r('Over-taxed by BDO', bdoNet - net, 'grand'),
+    ])}
+    ${t('Deferred tax at 30 Jun 2025', [
+      r('ROU asset (FS note 15)', L.rou),
+      r('Lease liability before FX', -liab),
+      r('Temporary difference — asset', td, 'subtotal'),
+      r('Deferred tax asset at ' + L.rateThen + '% (not booked)', td * L.rateThen / 100, 'grand', 'Recognised in ' + L.trueUpIn + ' at ' + L.rateNow + '% (rate enacted Dec 2025) as a prior-year item. FX is exempt, so the 65,489 is excluded.'),
+    ])}
   </div>`;
 }
 

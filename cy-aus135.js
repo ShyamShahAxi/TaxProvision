@@ -33,7 +33,7 @@
 'use strict';
 
 /* Bump when the bundled data changes: viewers' stored AUS135 is reseeded once. */
-const AUS135_BUNDLE_VERSION = '2026-11-12.3';
+const AUS135_BUNDLE_VERSION = '2026-11-12.4';
 
 function aus135Settings(fy) {
   const base = Object.assign({}, defaultSettings, {
@@ -73,6 +73,8 @@ function aus135FY25() {
       L('Rent payments (IFRS 16 lease) — per BDO', 54795, 'temporary'),
     ],
     deferredItems: [],         // none recognised in the signed FY25 accounts
+    bdoReview: aus135FY25Recompute(),
+    leaseRecon: aus135LeaseRecon(),
     priorTaxByAccount: {},
     locked: true,
   });
@@ -102,14 +104,24 @@ function aus135FY25Recompute() {
     { sec: 'Less' },
     { label: 'Annual wear and tear allowances', bdo: 1148, cor: 4230.40, st: 'fix', note: 'BDO claimed the book depreciation (no % on its schedule). Statutory: computer hardware 20% × 18,173 = 3,634.60; CCTV and TV 10% × 5,958 = 595.80; full annual allowance. The Lenovo Thinkpad 59,649 (bought 30 Jun 2025, in use from 1 Jul 2025) starts in FY26. Per FAR.' },
     { label: 'Realised foreign exchange profit', bdo: 17488, cor: 17488, st: 'ok', note: 'Currency conversion 410300 — a gain of 17,487.50 that is inside PBT. FX is exempt, so the gain is taken out (deducted) just as the loss is added back; it is a removal of exempt income, not a second deduction.' },
-    { label: 'Rent payments (IFRS 16 lease)', bdo: 54795, cor: 54795, st: 'ok', note: 'Lease liability 450,832.93 → 396,038.13 before FX = principal repaid 54,794.80. With the interest now allowed, total relief = 66,104.99 = the rent actually paid. ROU depreciation is added back above.' },
+    { label: 'Rent payments (IFRS 16 lease)', bdo: 54795, cor: 54795, st: 'ok', note: 'ROU cost 450,832.93 − liability before FX 396,038.13 = 54,794.80: paid at commencement 8,497 + principal repaid Feb – Jun 46,298 (lease schedule). With the interest now allowed, total relief = 66,104.99 = the rent actually paid. See the lease reconciliation below.' },
   ];
   const sum = k => lines.filter(l => !l.sec).reduce((s, l) => s + (/^(Annual|Realised|Rent)/.test(l.label) ? -l[k] : l[k]), 0);
   const bdoCI = r2(sum('bdo')), ci = r2(sum('cor'));
   const tax = r2(ci * 0.125), addl = r2(tax * 0.10), recomputed = r2(tax + addl);
   const bdoTax = 69229.25, bdoAddl = 6922.93;
-  return { lines, bdoCI, ci, rate: 12.5, bdoTax, tax, addlPct: 10, bdoAddl, addl, recomputed, filed, diff: r2(recomputed - filed),
+  return { trueUpIn: 'FY26', lines, bdoCI, ci, rate: 12.5, bdoTax, tax, addlPct: 10, bdoAddl, addl, recomputed, filed, diff: r2(recomputed - filed),
     addlNote: 'Kept at 10% of the tax, as BDO. Most sources read the charge as 10% of (75% of the final tax − provisional tax paid), i.e. 7.5% of the tax when nothing was paid — to confirm.' };
+}
+
+/* FY25 IFRS 16 lease — per the lease schedule (monthly Sage postings) and the
+   audited TB. Principal Feb–Jun 8,545 + 8,956 + 9,453 + 9,476 + 9,868. */
+function aus135LeaseRecon() {
+  const principal = 46298, closing = 396038.13, rou = 390900.56, bdoRent = 450832.93 - closing;
+  return { source: 'Per the IFRS 16 lease schedule (Sage postings Jan – Jun 2025) and the audited TB. Lease from 1 Jan 2025, 48 months, 5%, payments in EUR.',
+    initial: closing + principal, principal, prepaid: Math.round((bdoRent - principal) * 100) / 100, bdoRent,
+    fx: 65489, dep: 59932.38, interest: 11310.19, paid: Math.round((bdoRent + 11310.19) * 100) / 100, rou,
+    rateThen: 12.5, rateNow: 15, trueUpIn: 'FY26' };
 }
 
 /* FY26 — TB-linked computation with the true-ups. */
@@ -150,7 +162,7 @@ function aus135FY26() {
     // expected FY25 balance is the recomputed tax, so the CT-FY25 journal
     // releases the over-provision to income tax expense.
     priorTaxByAccount: { '260100': -aus135FY25Recompute().recomputed },
-    priorYearTrueUp: aus135FY25Recompute(),
+    priorYearTrueUp: (({ recomputed, filed, diff }) => ({ recomputed, filed, diff }))(aus135FY25Recompute()),
     priorYearProvisionCarried: 76152.18,
     priorYearAdjustment: 0,
     // Sage posting pack. Sage FY25 is locked and its 1 Jul 2025 opening is
