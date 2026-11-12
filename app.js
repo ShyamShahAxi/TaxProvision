@@ -39,6 +39,12 @@ const defaultSettings = {
   glDeferredBalance: '260400',  // Deferred tax liability / (asset) (balance sheet)
   glReval: '400300',            // Revaluation (FX) — balancing account for the current-tax reconciliation
   glBank: '100100',             // Bank / cash (for tax paid)
+  // Jurisdiction extras (all neutral by default, so SG/UK are unaffected):
+  jurisdiction: 'sg',     // 'sg' | 'uk' | 'cy' — labels only (year names, legends)
+  taxRate2: 0,            // second tax-year rate % when the FY straddles a rate change (0 = single rate)
+  rate2Share: 0,          // % of chargeable income apportioned to the second tax year
+  dtRate: '',             // deferred tax rate % (enacted rate for reversal); blank = current-tax rate
+  addlChargePct: 0,       // additional charge % on tax payable (Cyprus 10% additional tax)
 };
 
 /* ---------- Provision (one Year of Assessment) ---------- */
@@ -114,7 +120,7 @@ function switchYear(ya) {
    (STORE_KEY/SETTINGS_KEY/YEARS_KEY); others are archived under ENTITIES_KEY and
    snapshotted only when leaving. settings.entity is the entity code (also used to
    filter the stat-adjustment import). */
-const BUNDLED_ENTITIES = ['AUS155', 'AUS501'];
+const BUNDLED_ENTITIES = ['AUS155', 'AUS501', 'AUS135'];
 function loadEntities() { try { return JSON.parse(localStorage.getItem(ENTITIES_KEY)) || {}; } catch (e) { return {}; } }
 function saveEntities(e) { localStorage.setItem(ENTITIES_KEY, JSON.stringify(e)); }
 function snapshotActiveEntity() {
@@ -144,16 +150,35 @@ function ukSettings() {
     capRate: 0, sgdRate: 1,
   });
 }
+/* (Re)load the bundled AUS135 Cyprus profile — FY25 as filed + FY26 — and
+   switch to it. Replaces any AUS135 working copy (confirmed first). */
+function loadAUS135() {
+  if (typeof aus135Bundle !== 'function') { toast('AUS135 data not found'); return; }
+  const isActive = String(settings.entity) === 'AUS135';
+  if ((isActive || loadEntities().AUS135) && !confirm('Reload the bundled AUS135 (Cyprus) FY25 + FY26 provision? Your AUS135 edits will be replaced.')) return;
+  if (isActive) {
+    const b = aus135Bundle();
+    settings = Object.assign({}, defaultSettings, b.settings);
+    provision = Object.assign(emptyProvision(), b.provision);
+    saveYears(b.years); saveSettings(); saveProvision(); renderAll();
+    toast('AUS135 reloaded — FY26 active, FY25 (as filed) in the year selector');
+    return;
+  }
+  const store = loadEntities(); delete store.AUS135; saveEntities(store);
+  switchEntity('AUS135');
+}
 function switchEntity(code) {
   code = String(code);
   if (code === String(settings.entity)) return;
   snapshotActiveEntity();
   const store = loadEntities();
   let e = store[code];
-  if (!e) {  // first time on this entity — create a shell
+  if (!e) {  // first time on this entity — create a shell (or seed a bundled one)
     e = code === 'AUS501'
       ? { settings: ukSettings(), provision: emptyProvision(), years: {} }
-      : { settings: Object.assign({}, defaultSettings, { entity: code }), provision: emptyProvision(), years: {} };
+      : code === 'AUS135' && typeof aus135Bundle === 'function'
+        ? aus135Bundle()
+        : { settings: Object.assign({}, defaultSettings, { entity: code }), provision: emptyProvision(), years: {} };
   }
   settings = Object.assign({}, defaultSettings, e.settings);
   provision = Object.assign(emptyProvision(), e.provision);
@@ -261,6 +286,13 @@ function currentTaxAccounts() { return (settings.currentTaxCodes || '').split(',
    a YA taxes the prior financial year, so FY = YA − 1 (YA 2027 → FY26, prior FY25).
    Labels re-derive when the year changes, so roll-forward relabels correctly. */
 function fyCur() { const n = Number(settings.ya); return isFinite(n) ? 'FY' + String((n - 1) % 100).padStart(2, '0') : 'current year'; }
+/* Year label: "YA 2026" (Singapore/UK) or "FY26 · tax years 2025/2026" (Cyprus,
+   which taxes calendar years — a June year-end FY spans two of them). */
+function yearTag() {
+  const n = Number(settings.ya);
+  if (settings.jurisdiction === 'cy' && isFinite(n)) return fyCur() + ' · tax years ' + (n - 2) + '/' + (n - 1);
+  return 'YA ' + settings.ya;
+}
 function fyPrior() { const n = Number(settings.ya); return isFinite(n) ? 'FY' + String((n - 2) % 100).padStart(2, '0') : 'prior year'; }
 function currentTaxPayableTB(which) {
   const tm = tbMap(), am = auditMap();
@@ -378,8 +410,27 @@ function exemptionAmount(ci) {
   return 0;
 }
 
+/* Tax rates. A financial year that straddles two tax years with different
+   rates (e.g. Cyprus FY26: Jul–Dec 2025 at 12.5%, Jan–Jun 2026 at 15%) taxes
+   its chargeable income at the apportioned blend. Deferred tax is measured at
+   the rate enacted for reversal (dtRate), which can differ from that blend. */
+function taxRates() {
+  const r1 = num(settings.taxRate) / 100;
+  const r2 = num(settings.taxRate2) / 100;
+  const share = Math.min(1, Math.max(0, num(settings.rate2Share) / 100));
+  const rEff = r2 > 0 ? r1 * (1 - share) + r2 * share : r1;
+  const rDT = settings.dtRate !== '' && settings.dtRate != null && num(settings.dtRate) > 0 ? num(settings.dtRate) / 100 : rEff;
+  return { r1, r2, share, rEff, rDT };
+}
+function rateLabel() {
+  const t = taxRates();
+  if (!(t.r2 > 0)) return pct(settings.taxRate);
+  return pct(t.rEff * 100) + ' (' + pct((1 - t.share) * 100) + ' at ' + pct(settings.taxRate) + ' · ' + pct(t.share * 100) + ' at ' + pct(settings.taxRate2) + ')';
+}
+function dtRateLabel() { return pct(taxRates().rDT * 100); }
+
 function recompute() {
-  const r = num(settings.taxRate) / 100;
+  const { rEff: r, rDT } = taxRates();
   const p = provision;
 
   const addPerm = p.addBacks.filter(x => x.type !== 'temporary');
@@ -418,18 +469,23 @@ function recompute() {
   if (cap > 0) rebate = Math.min(rebate, cap);
   const netTaxOnProfit = Math.max(0, grossTax - rebate);
   const ftc = num(p.foreignTaxCredits);
-  const currentTax = Math.max(0, netTaxOnProfit - ftc);
+  const taxAfterCredits = Math.max(0, netTaxOnProfit - ftc);
+  // Additional charge on the tax payable (Cyprus: 10% additional tax where
+  // provisional tax paid falls short) — 0 for other jurisdictions.
+  const addlCharge = taxAfterCredits * (num(settings.addlChargePct) / 100);
+  const currentTax = taxAfterCredits + addlCharge;
 
-  // Deferred tax on temporary differences (carrying amount − tax base).
+  // Deferred tax on temporary differences (carrying amount − tax base),
+  // measured at the deferred tax rate (enacted rate for reversal).
   const openingTD = p.deferredItems.reduce((s, x) => s + defTD(x, 'opening'), 0);
   const closingTD = p.deferredItems.reduce((s, x) => s + defTD(x, 'closing'), 0);
-  const openingDT = openingTD * r;
-  const closingDT = closingTD * r;
+  const openingDT = openingTD * rDT;
+  const closingDT = closingTD * rDT;
   const deferredCharge = closingDT - openingDT;   // total movement (+ = increase in liability)
   // Split the deferred movement into a prior-year component (true-ups / under-
   // over provision) and the current-year charge to P&L.
   const priorTD = p.deferredItems.reduce((s, x) => s + defPriorTD(x), 0);
-  const deferredPriorYr = priorTD * r;            // prior-year deferred (under/over provision)
+  const deferredPriorYr = priorTD * rDT;          // prior-year deferred (under/over provision)
   const deferredCY = deferredCharge - deferredPriorYr; // current-year deferred tax to P&L
 
   // Prior-year (over)/under provision of current tax — the P&L effect of the FY25
@@ -450,7 +506,7 @@ function recompute() {
   const closingPayable = num(p.openingCurrentTaxPayable) + currentTax + priorAdj - num(p.taxPaid);
 
   return {
-    r, pbt, addPerm, addTemp, dedPerm, dedTemp,
+    r, rDT, addlCharge, taxAfterCredits, pbt, addPerm, addTemp, dedPerm, dedTemp,
     addPermTotal, addTempTotal, dedPermTotal, dedTempTotal, addTotal, dedTotal,
     adjusted, lossesBF, lossOffset, ciBeforeExempt, currentYearLoss, lossesCF,
     exemption, exemptionSGD, fx, chargeableIncome, grossTax, rebate, netTaxOnProfit, ftc, currentTax,
@@ -467,7 +523,7 @@ let activeTab = 'dashboard';
 
 function renderAll() {
   $('#company-name').textContent = settings.companyName;
-  $('#header-ya').textContent = 'YA ' + settings.ya + (settings.periodEnd ? ' · period end ' + settings.periodEnd : '');
+  $('#header-ya').textContent = yearTag() + (settings.periodEnd ? ' · period end ' + settings.periodEnd : '');
   const noteLabel = 'Tax Note - ' + fyCur();
   const nt = $('#tab-notes'); if (nt) nt.textContent = noteLabel;
   const ntitle = $('#notes-title'); if (ntitle) ntitle.textContent = noteLabel;
@@ -485,9 +541,12 @@ function renderAll() {
 function renderYearSelector() {
   const sel = $('#year-select'); if (!sel) return;
   const cur = String(settings.ya);
+  const cy = settings.jurisdiction === 'cy';
   const opts = availableYears().map(ya => {
-    const n = Number(ya), fy = isFinite(n) ? ' · FY' + String((n - 1) % 100).padStart(2, '0') : '';
-    return `<option value="${attr(ya)}"${ya === cur ? ' selected' : ''}>YA ${esc(ya)}${fy}</option>`;
+    const n = Number(ya), fy = isFinite(n) ? 'FY' + String((n - 1) % 100).padStart(2, '0') : '';
+    // Cyprus taxes calendar tax years: a Jun year-end FY spans two of them.
+    const text = cy && isFinite(n) ? `${fy} · tax years ${n - 2}/${n - 1}` : `YA ${esc(ya)}${fy ? ' · ' + fy : ''}`;
+    return `<option value="${attr(ya)}"${ya === cur ? ' selected' : ''}>${text}</option>`;
   }).join('');
   sel.innerHTML = opts + `<option value="__roll__">＋ Roll forward to next YA…</option>`;
 }
@@ -520,10 +579,10 @@ function renderDashboard(P) {
   const kpis = [
     { label: 'Profit before tax', value: acc(P.pbt) },
     { label: 'Chargeable income', value: fmt(P.chargeableIncome) },
-    { label: 'Current tax', value: fmt(P.currentTax), hint: 'YA ' + settings.ya },
+    { label: 'Current tax', value: fmt(P.currentTax), hint: yearTag() },
     { label: 'Deferred tax ' + (P.deferredCY >= 0 ? 'charge' : 'credit'), value: acc(P.deferredCY), hint: 'current year' },
     { label: 'Total tax expense', value: acc(P.totalTaxExpense), accent: true },
-    { label: 'Effective tax rate', value: pct(P.etr * 100), hint: 'statutory ' + pct(settings.taxRate) },
+    { label: 'Effective tax rate', value: pct(P.etr * 100), hint: 'statutory ' + pct(P.r * 100) },
   ];
   $('#kpi-row').innerHTML = kpis.map(k =>
     `<div class="kpi${k.accent ? ' accent' : ''}"><div class="label">${esc(k.label)}</div>` +
@@ -536,7 +595,7 @@ function renderDashboard(P) {
     <tr><td class="label">(Over)/under provision in respect of prior years</td><td class="num">${acc(P.priorYearProvision)}</td></tr>
     <tr class="grand"><td class="label">Income tax expense</td><td class="num">${acc(P.totalTaxExpense)}</td></tr>
   </tbody></table>
-  <p class="legend">Closing deferred tax ${dtLabel}: ${fmt(Math.abs(P.closingDT))} on a temporary difference of ${acc(P.closingTD)} at ${pct(settings.taxRate)}.</p>`;
+  <p class="legend">Closing deferred tax ${dtLabel}: ${fmt(Math.abs(P.closingDT))} on a temporary difference of ${acc(P.closingTD)} at ${dtRateLabel()}.</p>`;
 
   const f = provision.far;
   $('#dash-far').innerHTML = f
@@ -795,7 +854,7 @@ function renderMedical() {
 
 /* ----- Leases (IFRS 16 / FRS 116) ----- */
 function renderLeases() {
-  const r = num(settings.taxRate) / 100;
+  const r = taxRates().rDT;
   const dep = leaseDep(), int = leaseInterest();
   const reverseDepInt = dep + int;
   const dO = leaseTD('opening'), dC = leaseTD('closing');
@@ -821,7 +880,7 @@ function renderLeases() {
     <tr><td class="label">Leasehold liability (140340 + make-good 250900)</td><td class="num" title="${exact(liab)}">${acc(liab)}</td></tr>
     <tr class="subtotal"><td class="label">Net temporary difference (closing)</td><td class="num" title="${exact(dC)}">${acc(dC)}</td></tr>
     <tr><td class="label">Net temporary difference (opening)</td><td class="num" title="${exact(dO)}">${acc(dO)}</td></tr>
-    <tr class="grand"><td class="label">Deferred tax asset/(liability) @ ${pct(settings.taxRate)}</td><td class="num" title="${exact(dC * r)}">${acc(dC * r)}</td></tr>
+    <tr class="grand"><td class="label">Deferred tax asset/(liability) @ ${dtRateLabel()}</td><td class="num" title="${exact(dC * r)}">${acc(dC * r)}</td></tr>
   </tbody></table>
   <p class="legend">The ROU asset (tax base nil) is a taxable difference; the lease liability and make-good provision are deductible differences. The net (${acc(dC)}) feeds the FRS 116 line in Deferred Tax.</p>`;
 }
@@ -890,12 +949,13 @@ function renderCurrent(P) {
     <tr class="grand"><td class="label">Chargeable income</td><td class="num" id="c-ci">${fmt(P.chargeableIncome)}</td><td colspan="2"></td></tr>
 
     <tr class="section"><td colspan="4">Tax</td></tr>
-    <tr><td class="label">Tax at ${pct(settings.taxRate)}</td><td class="num" id="c-gross">${fmt(P.grossTax)}</td><td colspan="2"></td></tr>
+    <tr><td class="label">Tax at ${esc(rateLabel())}</td><td class="num" id="c-gross" title="${exact(P.grossTax)}">${fmt(P.grossTax)}</td><td colspan="2"></td></tr>
     <tr><td class="label indent">Less: corporate income tax rebate</td><td class="num" id="c-rebate">${acc(-P.rebate)}</td><td colspan="2"></td></tr>
     <tr><td class="label indent">Less: foreign tax credits</td>
         <td class="num"><input class="amt" type="number" step="0.01" data-scalar="foreignTaxCredits" value="${provision.foreignTaxCredits}"></td>
         <td colspan="2"></td></tr>
-    <tr class="grand"><td class="label">Current tax payable</td><td class="num" id="c-currenttax">${fmt(P.currentTax)}</td><td colspan="2"></td></tr>
+    ${num(settings.addlChargePct) ? `<tr><td class="label indent">Add: additional charge at ${pct(settings.addlChargePct)}</td><td class="num" id="c-addl" title="${exact(P.addlCharge)}">${fmt(P.addlCharge)}</td><td colspan="2"></td></tr>` : ''}
+    <tr class="grand"><td class="label">Current tax payable</td><td class="num" id="c-currenttax" title="${exact(P.currentTax)}">${fmt(P.currentTax)}</td><td colspan="2"></td></tr>
   `;
   if (P.lossesCF > 0.005) {
     body.insertAdjacentHTML('beforeend',
@@ -922,12 +982,13 @@ function updateCurrentComputed() {
   set('c-ci', fmt(P.chargeableIncome));
   set('c-gross', fmt(P.grossTax));
   set('c-rebate', acc(-P.rebate));
+  set('c-addl', fmt(P.addlCharge));
   set('c-currenttax', fmt(P.currentTax));
 }
 
 /* ----- Deferred tax ----- */
 function renderDeferred(P) {
-  const r = P.r;
+  const r = P.rDT;
   const body = $('#deferred-body');
   if (!provision.deferredItems.length) {
     body.innerHTML = `<tr class="empty-row"><td colspan="8">No temporary differences. Add one, or import a FAR backup.</td></tr>`;
@@ -936,7 +997,7 @@ function renderDeferred(P) {
       const op = defTD(x, 'opening'), cl = defTD(x, 'closing');
       const pr = defPriorTD(x), cy = cl - op - pr;
       const opAdj = defOpeningOverridden(x);
-      const openCell = `<td class="num" title="${opAdj ? 'Opening set to the signed accounts (prior-year WIP reclassified to software development)' : exact(op)}">${acc(op)}${opAdj ? ' <span class="src-tag" style="background:var(--amber-bg);color:var(--amber)">adj</span>' : ''}</td>`;
+      const openCell = `<td class="num" title="${opAdj ? attr(x.openingNote || 'Opening set to the signed accounts (prior-year WIP reclassified to software development)') : exact(op)}">${acc(op)}${opAdj ? ' <span class="src-tag" style="background:var(--amber-bg);color:var(--amber)">adj</span>' : ''}</td>`;
       if (defLinked(x)) {
         // Opening (signed), prior-year and closing all read-only.
         return `<tr data-line="deferredItems" data-idx="${i}">
@@ -971,7 +1032,7 @@ function renderDeferred(P) {
     <td class="num">${acc(P.openingDT)}</td>
     <td class="num">${acc(P.closingDT)}</td><td></td></tr>`;
   $('#deferred-note').innerHTML =
-    `Opening deferred tax ${fmt(Math.abs(P.openingDT))} ${P.openingDT >= 0 ? 'liability' : 'asset'} → closing ${fmt(Math.abs(P.closingDT))} ${P.closingDT >= 0 ? 'liability' : 'asset'} at ${pct(settings.taxRate)}. ` +
+    `Opening deferred tax ${fmt(Math.abs(P.openingDT))} ${P.openingDT >= 0 ? 'liability' : 'asset'} → closing ${fmt(Math.abs(P.closingDT))} ${P.closingDT >= 0 ? 'liability' : 'asset'} at ${dtRateLabel()}. ` +
     `Movement of ${acc(P.deferredCharge)} to profit or loss — prior-year ${acc(P.deferredPriorYr)} (under/over provision) and current-year ${acc(P.deferredCY)}.` +
     (provision.deferredItems.some(defOpeningOverridden) ? ` &nbsp;The opening of ${fmt(Math.abs(P.openingDT))} ${P.openingDT >= 0 ? 'liability' : 'asset'} is set to the signed accounts — the prior-year WIP (previously a deferred tax asset) has reclassified to software development and unwinds through the current-year movement. Prior-year true-ups can be entered separately.` : '');
 }
@@ -980,12 +1041,21 @@ function renderDeferred(P) {
 function reconLines(P) {
   const r = P.r;
   const rows = [];
-  rows.push({ label: 'Tax at statutory rate of ' + pct(settings.taxRate), amt: P.pbt * r });
+  rows.push({ label: 'Tax at statutory rate of ' + rateLabel(), amt: P.pbt * r });
   if (P.addPermTotal) rows.push({ label: 'Tax effect of non-deductible expenses', amt: P.addPermTotal * r });
   if (P.dedPermTotal) rows.push({ label: 'Tax effect of income not subject to tax', amt: -P.dedPermTotal * r });
   if (P.exemption) rows.push({ label: 'Benefit of ' + exemptionLabel(), amt: -P.exemption * r });
   if (P.rebate) rows.push({ label: 'Corporate income tax rebate', amt: -P.rebate });
   if (P.ftc) rows.push({ label: 'Foreign tax credits', amt: -P.ftc });
+  if (P.addlCharge) rows.push({ label: 'Additional charge at ' + pct(settings.addlChargePct), amt: P.addlCharge });
+  // Temporary differences cancel between current and deferred tax only when
+  // both use the same rate; measuring deferred tax at a different enacted rate
+  // leaves the rate differential on the current-year temporary items.
+  if (Math.abs(P.rDT - r) > 1e-9) {
+    const tempNet = P.addTempTotal - P.dedTempTotal;  // net temporary items in chargeable income
+    const diff = -tempNet * (P.rDT - r);
+    if (Math.abs(diff) > 0.005) rows.push({ label: 'Deferred tax measured at the enacted rate of ' + dtRateLabel(), amt: diff });
+  }
   if (P.priorYearProvision) rows.push({ label: '(Over)/under provision in respect of prior years', amt: P.priorYearProvision });
   const explained = rows.reduce((t, x) => t + x.amt, 0);
   const other = P.totalTaxExpense - explained;
@@ -1047,11 +1117,11 @@ function buildJournals(P) {
       return lines;
     };
     const l26 = yearJournal(ctJournalFY26, 'Income tax expense — current year');
-    if (l26.length) js.push({ ref: 'CT-' + fyCur(), narrative: 'Current tax — ' + fyCur() + ' (current year) provision (YA ' + s.ya + ')', lines: l26 });
+    if (l26.length) js.push({ ref: 'CT-' + fyCur(), narrative: 'Current tax — ' + fyCur() + ' (current year) provision (' + yearTag() + ')', lines: l26 });
     const l25 = yearJournal(ctJournalFY25, 'Income tax expense — (over)/under provision prior year');
     if (l25.length) js.push({ ref: 'CT-' + fyPrior(), narrative: 'Current tax — ' + fyPrior() + ' (prior year) provision / (over)under provision', lines: l25 });
   } else if (Math.abs(P.currentTax) > 0.005) {
-    js.push({ ref: 'CT-' + fyCur(), narrative: 'Current year income tax provision — YA ' + s.ya, lines: [
+    js.push({ ref: 'CT-' + fyCur(), narrative: 'Current year income tax provision — ' + yearTag(), lines: [
       dr(s.glTaxExpense, 'Income tax expense — current', P.currentTax),
       cr(s.glTaxPayable, 'Provision for income tax', P.currentTax),
     ] });
@@ -1135,7 +1205,7 @@ function renderJournals(P) {
 
 function exportJournalsCsv(P) {
   P = P || recompute();
-  const rows = [['Provision journals', 'YA ' + settings.ya], ['Journal', 'Narrative', 'Account', 'Description', 'Debit', 'Credit']];
+  const rows = [['Provision journals', yearTag()], ['Journal', 'Narrative', 'Account', 'Description', 'Debit', 'Credit']];
   buildJournals(P).forEach(j => j.lines.forEach(l =>
     rows.push([j.ref, j.narrative, l.account, l.name, l.dr ? round2(l.dr) : '', l.cr ? round2(l.cr) : ''])));
   download(`tax-journals-ya${settings.ya}.csv`, toCsv(rows), 'text/csv');
@@ -1149,7 +1219,7 @@ function renderNotes(P) {
   // totals (defTD resolves TB-linked accounts and any opening override), so the
   // rows add up to the opening / movement / closing totals below.
   const dtRows = provision.deferredItems.map(x => {
-    const op = defTD(x, 'opening') * P.r, cl = defTD(x, 'closing') * P.r;
+    const op = defTD(x, 'opening') * P.rDT, cl = defTD(x, 'closing') * P.rDT;
     return `<tr><td>${esc(x.label || '—')}</td><td class="num note-num">${acc(op)}</td>` +
       `<td class="num note-num">${acc(cl - op)}</td>` +
       `<td class="num note-num">${acc(cl)}</td></tr>`;
@@ -1158,7 +1228,7 @@ function renderNotes(P) {
   $('#notes-wrap').innerHTML = `
   <div class="note-block">
     <h3>Income tax expense</h3>
-    <div class="note-sub">For YA ${esc(settings.ya)} — amounts in ${esc(cur)}. Ties to the final trial balance (accounts ${esc(settings.glTaxExpense)} + ${esc(settings.glDeferredExpense)} after the tax provision journals).</div>
+    <div class="note-sub">For ${esc(yearTag())} — amounts in ${esc(cur)}. Ties to the final trial balance (accounts ${esc(settings.glTaxExpense)} + ${esc(settings.glDeferredExpense)} after the tax provision journals).</div>
     <div class="table-wrap"><table class="comp-table"><tbody>
       <tr class="section"><td colspan="2">Current tax</td></tr>
       <tr><td class="label">Current year</td><td class="num">${acc(P.currentTax)}</td></tr>
@@ -1199,6 +1269,10 @@ function renderData() {
   $('#s-ya').value = settings.ya;
   $('#s-periodEnd').value = settings.periodEnd || '';
   $('#s-taxRate').value = settings.taxRate;
+  if ($('#s-taxRate2')) $('#s-taxRate2').value = settings.taxRate2 || 0;
+  if ($('#s-rate2Share')) $('#s-rate2Share').value = settings.rate2Share || 0;
+  if ($('#s-dtRate')) $('#s-dtRate').value = settings.dtRate == null ? '' : settings.dtRate;
+  if ($('#s-addlChargePct')) $('#s-addlChargePct').value = settings.addlChargePct || 0;
   $('#s-exemption').value = settings.exemption;
   $('#s-rebatePct').value = settings.rebatePct;
   $('#s-rebateCap').value = settings.rebateCap;
@@ -1433,7 +1507,7 @@ function toCsv(rows) { return rows.map(r => r.map(csvEsc).join(',')).join('\r\n'
 
 function exportCurrentCsv() {
   const P = recompute();
-  const rows = [['Tax computation', 'YA ' + settings.ya], ['Item', 'Amount'],
+  const rows = [['Tax computation', yearTag()], ['Item', 'Amount'],
     ['Net profit/(loss) before tax', P.pbt]];
   provision.addBacks.forEach(x => rows.push(['Add-back: ' + x.label + ' (' + x.type + ')' + (x.account ? ' [TB ' + x.account + ']' : ''), round2(lineAmt(x))]));
   rows.push(['Total add-backs', P.addTotal]);
@@ -1441,14 +1515,14 @@ function exportCurrentCsv() {
   rows.push(['Total deductions', -P.dedTotal], ['Adjusted profit/(loss)', P.adjusted],
     ['Losses utilised', -P.lossOffset], ['Chargeable income before exemption', P.ciBeforeExempt],
     ['Tax exemption', -P.exemption], ['Chargeable income', P.chargeableIncome],
-    ['Tax at ' + settings.taxRate + '%', P.grossTax], ['CIT rebate', -P.rebate],
+    ['Tax at ' + rateLabel(), P.grossTax], ['CIT rebate', -P.rebate], ['Additional charge', P.addlCharge],
     ['Foreign tax credits', -P.ftc], ['Current tax payable', P.currentTax]);
   download(`tax-computation-ya${settings.ya}.csv`, toCsv(rows), 'text/csv');
 }
 
 function exportReconCsv() {
   const P = recompute();
-  const rows = [['Effective tax rate reconciliation', 'YA ' + settings.ya], ['Item', 'Amount', '% of PBT']];
+  const rows = [['Effective tax rate reconciliation', yearTag()], ['Item', 'Amount', '% of PBT']];
   reconLines(P).forEach(x => rows.push([x.label, round2(x.amt), P.pbt ? round2(x.amt / P.pbt * 100) : '']));
   download(`tax-reconciliation-ya${settings.ya}.csv`, toCsv(rows), 'text/csv');
 }
@@ -1613,6 +1687,7 @@ function wire() {
 
   // Pull FAR data from the same browser (shared origin on the live site)
   $('#btn-far-browser').addEventListener('click', importFarFromBrowser);
+  if ($('#btn-aus135')) $('#btn-aus135').addEventListener('click', loadAUS135);
 
   $('#btn-save-settings').addEventListener('click', () => {
     settings.companyName = $('#s-companyName').value.trim() || 'Company';
@@ -1621,6 +1696,10 @@ function wire() {
     settings.ya = $('#s-ya').value.trim() || '';
     settings.periodEnd = $('#s-periodEnd').value || null;
     settings.taxRate = num($('#s-taxRate').value);
+    if ($('#s-taxRate2')) settings.taxRate2 = num($('#s-taxRate2').value);
+    if ($('#s-rate2Share')) settings.rate2Share = num($('#s-rate2Share').value);
+    if ($('#s-dtRate')) settings.dtRate = $('#s-dtRate').value.trim() === '' ? '' : num($('#s-dtRate').value);
+    if ($('#s-addlChargePct')) settings.addlChargePct = num($('#s-addlChargePct').value);
     settings.exemption = $('#s-exemption').value;
     settings.rebatePct = num($('#s-rebatePct').value);
     settings.rebateCap = num($('#s-rebateCap').value);

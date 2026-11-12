@@ -303,6 +303,10 @@
                 <option value="startup">Start-up tax exemption (first 3 YAs)</option>
                 <option value="none">None</option>
               </select></div>
+            <div class="field"><label>2nd tax-year rate % (0 = single rate)</label><input id="s-taxRate2" type="number" step="0.01" min="0" max="100" placeholder="e.g. 15"></div>
+            <div class="field"><label>% of income in 2nd tax year</label><input id="s-rate2Share" type="number" step="0.01" min="0" max="100" placeholder="e.g. 50"></div>
+            <div class="field"><label>Deferred tax rate % (blank = tax rate)</label><input id="s-dtRate" type="number" step="0.01" min="0" max="100" placeholder="enacted rate"></div>
+            <div class="field"><label>Additional charge % on tax</label><input id="s-addlChargePct" type="number" step="0.01" min="0" max="100" placeholder="Cyprus 10"></div>
             <div class="field"><label>CIT rebate %</label><input id="s-rebatePct" type="number" step="0.01" min="0" max="100" placeholder="year-specific"></div>
             <div class="field"><label>CIT rebate cap</label><input id="s-rebateCap" type="number" step="0.01" min="0" placeholder="e.g. 40000"></div>
             <div class="field"><label>Medical cap rate %</label><input id="s-capRate" type="number" step="0.01" min="0" max="100" placeholder="1 (or 2 if portable)"></div>
@@ -331,6 +335,12 @@
             <input type="file" id="far-file" accept="application/json,.json" style="display:none">
           </div>
           <div id="far-status"></div>
+
+          <h3 style="margin-top:22px">Bundled entities</h3>
+          <div class="toolbar" style="margin-bottom:12px">
+            <button id="btn-aus135">Load AUS135 (Cyprus) — FY25 + FY26</button>
+          </div>
+          <p class="legend" style="margin-top:0">AXI Services (Cyprus) Limited: FY25 as filed by BDO (locked) and FY26 from the audit TB with the true-ups. Selecting AUS135 in the header loads it the first time; this button reloads the bundled version.</p>
 
           <h3 style="margin-top:22px">Backup / restore</h3>
           <div class="toolbar" style="margin-bottom:12px">
@@ -367,6 +377,8 @@
   <script src="far-import.js?v=1"></script>
   <script src="tb-aus155.js?v=2"></script>
   <script src="sample-data.js?v=10"></script>
-  <script src="app.js?v=39"></script>
+  <script src="data-aus135.js?v=1"></script>
+  <script src="cy-aus135.js?v=1"></script>
+  <script src="app.js?v=40"></script>
 </body>
 </html>

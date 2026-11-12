@@ -36,7 +36,10 @@ function createFarEngine(settings) {
   const sameFY = (a, b) => fyEndFor(a).getTime() === fyEndFor(b).getTime();
 
   const acctCost = a => num(a.purchaseCost) + num(a.installationCost) + num(a.otherCost);
-  const taxCost = a => (a.taxCostOverride !== '' && a.taxCostOverride != null) ? num(a.taxCostOverride) : acctCost(a);
+  const regime = settings.taxRegime || 'sg';
+  const taxCost = a => regime === 'mirror' ? acctCost(a)
+    : (a.taxCostOverride !== '' && a.taxCostOverride != null) ? num(a.taxCostOverride) : acctCost(a);
+  const claimsOnIncurred = a => !!(a && a.taxClaimOnIncurred) && regime !== 'mirror';
 
   const hasWIP = a => !!(a && a.wipCategory && parseDate(a.inServiceDate));
   const depStartDate = a => parseDate(a.inServiceDate) || parseDate(a.acquisitionDate);
@@ -61,43 +64,58 @@ function createFarEngine(settings) {
   }
 
   function buildSchedule(a, kind, asOf) {
+    // 'mirror' regime: the tax schedule IS the accounting schedule.
+    if (kind === 'tax' && regime === 'mirror') kind = 'acct';
     const acq = parseDate(a.acquisitionDate);
     if (!acq) return { rows: [] };
 
+    // Opening-balance (opening-WDV) mode — brought forward at a written-down value.
+    const opWDV = parseDate(kind === 'acct' ? a.openingDate : a.taxOpeningDate) || null;
+    const startDate = opWDV || acq;
+
     const disposal = a.disposed ? parseDate(a.disposalDate) : null;
     const horizon = asOf;
-    const depStart = depStartDate(a) || acq;
+    const depStart = opWDV || (kind === 'tax' && claimsOnIncurred(a) ? acq : depStartDate(a)) || acq;
 
-    let method, base, residual, lifeYears, rate, initialAllow;
+    let method, gross, base, residual, lifeYears, rate, initialAllow, openAccDep;
     if (kind === 'acct') {
       method = a.acctMethod || 'straight-line';
-      base = acctCost(a);
+      gross = opWDV ? num(a.openingCost) : acctCost(a);
+      openAccDep = num(a.openingAccDep);
       residual = num(a.residualValue);
       lifeYears = num(a.usefulLife);
       rate = num(a.acctRate);
       initialAllow = 0;
     } else {
       method = a.taxMethod || 'prime-cost';
-      base = taxCost(a);
+      gross = opWDV ? num(a.taxOpeningCost) : taxCost(a);
+      openAccDep = num(a.taxOpeningAccDep);
       residual = 0;
       lifeYears = num(a.taxLife);
       rate = num(a.taxRate);
       initialAllow = num(a.taxInitialAllowance);
     }
+    base = opWDV ? gross - openAccDep : gross;
 
     const lifeEnd = (method === 'straight-line' && lifeYears)
       ? endOfLife(depStart, 'straight-line', lifeYears)
       : (method === 'prime-cost' && lifeYears && !rate ? endOfLife(depStart, 'prime-cost', lifeYears) : null);
 
+    // Book-basis years (settings.taxMirrorUntil): FYs ending on or before it
+    // claim the accounting depreciation as the tax allowance.
+    const mirrorUntil = kind === 'tax' && settings.taxMirrorUntil ? parseDate(settings.taxMirrorUntil) : null;
+    const bookCharge = new Map();
+    if (mirrorUntil) buildSchedule(a, 'acct', horizon).rows.forEach(r => { if (r.fyEnd <= mirrorUntil) bookCharge.set(r.fyEnd.getTime(), r.charge); });
+
     const rows = [];
-    let opening = 0, accumulated = 0;
-    let fyEnd = fyEndFor(acq);
+    let opening = 0, accumulated = opWDV ? openAccDep : 0;
+    let fyEnd = fyEndFor(startDate);
     let carry = base, firstFY = true, guard = 0;
     const depreciable = Math.max(0, base - residual);
 
     while (guard++ < 200) {
       const fyStart = fyStartFor(fyEnd);
-      const winStart = acq > fyStart ? acq : fyStart;
+      const winStart = startDate > fyStart ? startDate : fyStart;
       let winEnd = fyEnd;
       if (disposal && disposal < winEnd) winEnd = disposal;
       if (horizon < winEnd) winEnd = horizon;
@@ -108,7 +126,9 @@ function createFarEngine(settings) {
       const depDays = winEnd >= depWinStart ? daysBetween(depWinStart, winEnd) + 1 : 0;
       let frac = Math.min(1, depDays / daysInFY);
       const inServiceThisFY = depStart >= fyStart && depStart <= fyEnd;
-      if (kind === 'tax') frac = depDays > 0 ? 1 : 0;
+      // Tax allowances are a full annual claim (not time-apportioned), except
+      // Australia (Div 40), which apportions by days held like accounting.
+      if (kind === 'tax' && regime !== 'au') frac = depDays > 0 ? 1 : 0;
 
       opening = carry;
       const addition = firstFY ? base : 0;
@@ -117,7 +137,7 @@ function createFarEngine(settings) {
       if (opening - residual > 0.005) {
         if (method === 'straight-line' || method === 'prime-cost') {
           let annual;
-          if (method === 'prime-cost' && rate) annual = base * (rate / 100);
+          if (method === 'prime-cost' && rate) annual = gross * (rate / 100);  // % of full cost
           else if (lifeYears) annual = depreciable / lifeYears;
           else annual = 0;
           charge = annual * frac;
@@ -128,6 +148,14 @@ function createFarEngine(settings) {
         charge = Math.min(charge, opening - residual);
         if (charge < 0) charge = 0;
       }
+
+      // One-off accounting depreciation adjustment in a single FY.
+      if (kind === 'acct' && a.acctDepAdjustment) {
+        const adjEnd = a.acctDepAdjDate ? fyEndFor(parseDate(a.acctDepAdjDate)) : fyEndFor(horizon);
+        if (adjEnd && fyEnd.getTime() === adjEnd.getTime()) charge += num(a.acctDepAdjustment);
+      }
+      // Book-basis year: the allowance is the accounting depreciation (as filed).
+      if (mirrorUntil && fyEnd <= mirrorUntil) charge = Math.min(bookCharge.get(fyEnd.getTime()) || 0, Math.max(0, opening));
 
       accumulated += charge;
       carry = opening - charge;
