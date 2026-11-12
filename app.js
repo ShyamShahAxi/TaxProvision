@@ -1244,6 +1244,28 @@ function withYear(ya, fn) {
 /* Closing current tax payable (liability +) after the provision journals. */
 function closingTaxPayable(P) { return num(provision.priorYearProvisionCarried) + P.currentTax + P.priorAdj - num(provision.taxPaid); }
 
+/* Prior-year current tax recomputed (provision.priorYearTrueUp): the corrected
+   computation against the amount booked, which drives the CT-prior journal. */
+function trueUpBlock() {
+  const t = provision.priorYearTrueUp;
+  if (!t) return '';
+  const r = (label, v, cls) => `<tr class="${cls || ''}"><td class="label">${esc(label)}</td><td class="num">${acc(v)}</td></tr>`;
+  return `<div class="note-block">
+    <h3>${esc(fyPrior())} current tax recomputed — true-up in ${esc(fyCur())}</h3>
+    <div class="note-sub">${esc(fyPrior())} is closed as signed. The prior-year computation is corrected here and the difference to the tax booked is recognised in ${esc(fyCur())} as an (over)/under provision (journal CT-${esc(fyPrior())}).</div>
+    <div class="table-wrap"><table class="comp-table"><tbody>
+      ${r('Chargeable income per the filed computation', t.bdoCI, 'subtotal')}
+      ${t.adj.map(a => r(a.label, a.amount)).join('')}
+      ${r('Chargeable income — corrected', t.ci, 'subtotal')}
+      ${r('Tax at ' + t.rate + '%', t.tax)}
+      ${r(t.addlPct + '% additional charge', t.addl)}
+      ${r('Tax payable — corrected', t.recomputed, 'subtotal')}
+      ${r('Tax booked in ' + fyPrior(), t.filed)}
+      ${r(t.diff < 0 ? 'Over-provision released in ' + fyCur() : 'Under-provision charged in ' + fyCur(), t.diff, 'grand')}
+    </tbody></table></div>
+  </div>`;
+}
+
 /* Tax note in financial-statement form, with prior-year comparatives taken
    from the archived prior year (when one exists). */
 function renderNotes(P) {
@@ -1304,8 +1326,9 @@ function renderNotes(P) {
     <div class="table-wrap"><table class="comp-table">${head}<tbody>
       ${row('Corporation tax', C.payable, has ? R.payable : null, 'grand')}
     </tbody></table></div>
-    ${num(provision.priorYearProvisionCarried) ? `<p class="legend">Includes ${fmt(provision.priorYearProvisionCarried)} for ${esc(fyPrior())} still outstanding at the period end.</p>` : ''}
+    ${num(provision.priorYearProvisionCarried) ? `<p class="legend">Includes ${fmt(num(provision.priorYearProvisionCarried) + Q.priorAdj)} for ${esc(fyPrior())} still outstanding at the period end${Math.abs(Q.priorAdj) > 0.005 ? ` (${fmt(provision.priorYearProvisionCarried)} booked, ${acc(Q.priorAdj)} true-up)` : ''}.</p>` : ''}
   </div>
+  ${trueUpBlock()}
 
   <div class="note-block">
     <h3>Deferred tax</h3>
@@ -1875,6 +1898,7 @@ function rollForwardYear() {
   provision.priorTaxByAccount = priorByAcct;
   provision.priorYearProvisionCarried = priorCarried;
   provision.priorYearAdjustment = 0;
+  delete provision.priorYearTrueUp;
   provision.openingCurrentTaxPayable = 0;
   provision.taxPaid = 0;
   provision.locked = false;   // the new year is editable
@@ -1950,6 +1974,18 @@ renderAll();
 try {
   const want = String(window.TP_DEFAULT_ENTITY || new URLSearchParams(location.search).get('entity') || '').trim();
   const k = 'taxprov.defaultEntity.v1';
+  // A newer bundled AUS135 replaces the stored copy once (data fixes reach
+  // viewers who already opened it).
+  const vk = 'taxprov.aus135Bundle.v1', ver = typeof AUS135_BUNDLE_VERSION === 'string' ? AUS135_BUNDLE_VERSION : '';
+  if (ver && localStorage.getItem(vk) !== ver) {
+    localStorage.setItem(vk, ver);
+    if (String(settings.entity) === 'AUS135') {
+      const b = aus135Bundle();
+      settings = Object.assign({}, defaultSettings, b.settings);
+      provision = Object.assign(emptyProvision(), b.provision);
+      saveYears(b.years); saveSettings(); saveProvision(); renderAll();
+    } else { const st = loadEntities(); delete st.AUS135; saveEntities(st); }
+  }
   if (want && localStorage.getItem(k) !== want) {
     localStorage.setItem(k, want);
     if (String(settings.entity) !== want) switchEntity(want);

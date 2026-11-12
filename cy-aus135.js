@@ -19,12 +19,21 @@
        FY25 method): Jul–Dec 2025 at 12.5%, Jan–Jun 2026 at 15% → 13.75%.
      * Deferred tax at 15%, the rate enacted for reversal.
      * 10% additional charge kept as in FY25 (no provisional tax paid).
-     * Wear and tear at Cyprus statutory rates from the FAR (FY25 as filed).
-     * Prior-year true-up: the deferred tax BDO did not recognise at
-       30 Jun 2025 is brought in as a prior-year deferred movement (opening
-       booked = nil; priorMovement = the 30 Jun 2025 temporary difference).
+     * Wear and tear at Cyprus statutory rates from the FAR (from FY25).
+     * Entertainment deductible up to the statutory cap; only the excess
+       is added back.
+     * Prior-year true-ups (FY25 stays as signed; corrections go through FY26):
+       - current tax: BDO's computation recomputed (aus135FY25Recompute) and
+         the difference to the 76,152.18 booked posted as a prior-year
+         (over)/under provision (CT-FY25 journal);
+       - deferred tax BDO did not recognise at 30 Jun 2025, brought in as a
+         prior-year deferred movement (opening booked = nil; priorMovement =
+         the 30 Jun 2025 temporary difference).
    ============================================================= */
 'use strict';
+
+/* Bump when the bundled data changes: viewers' stored AUS135 is reseeded once. */
+const AUS135_BUNDLE_VERSION = '2026-11-12.2';
 
 function aus135Settings(fy) {
   const base = Object.assign({}, defaultSettings, {
@@ -69,6 +78,26 @@ function aus135FY25() {
   });
 }
 
+/* Entertainment cap (ITL): lower of 1% of gross income or the € limit
+   (€17,086 for tax year 2025; €30,000 from tax year 2026 under the reform).
+   FY26 is apportioned 50/50 → 23,543. Applied as $ (€ limit taken at par,
+   conservative while the €/US$ basis is open). */
+const AUS135_ENT_EXCESS = Math.round((29616.26 + 3047.10 - (17086 + 30000) / 2) * 100) / 100;
+
+/* FY25 — BDO's computation corrected. FY25 stays as signed; the difference
+   to the 76,152.18 booked is the FY26 prior-year (over)/under provision. */
+function aus135FY25Recompute() {
+  const r2 = v => Math.round(v * 100) / 100;
+  const bdoCI = 553834, filed = 76152.18;
+  const adj = [
+    { label: 'Entertainment disallowed by BDO ("other non-allowable expenses") — within the cap (lower of 1% of gross income or €17,086), so deductible', amount: -12106 },
+    { label: 'Wear and tear at statutory rates (computer hardware 20%, CCTV/TV 10%, full annual allowance) 4,230.40 less BDO book depreciation 1,148', amount: -(4230.40 - 1148) },
+  ];
+  const ci = r2(bdoCI + adj.reduce((s, a) => s + a.amount, 0));
+  const tax = r2(ci * 0.125), addl = r2(tax * 0.10), recomputed = r2(tax + addl);
+  return { bdoCI, adj, ci, rate: 12.5, tax, addlPct: 10, addl, recomputed, filed, diff: r2(recomputed - filed) };
+}
+
 /* FY26 — TB-linked computation with the true-ups. */
 function aus135FY26() {
   const L = (label, type, account) => ({ id: uid(), label, amount: 0, type, source: 'manual', account });
@@ -81,8 +110,7 @@ function aus135FY26() {
       L('Depreciation — ROU asset (IFRS 16)', 'temporary', '670150'),
       L('Foreign exchange — currency conversion loss (exempt)', 'permanent', '410300'),
       L('Non-charitable gifts & donations', 'permanent', '620520'),
-      L('Staff entertainment — disallowed (BDO FY25 treatment)', 'permanent', '600570'),
-      L('Client entertainment — disallowed (BDO FY25 treatment)', 'permanent', '610180'),
+      { id: uid(), label: 'Entertainment above the statutory cap (600570 + 610180 = 32,663.36 less cap 23,543)', amount: AUS135_ENT_EXCESS, type: 'permanent', source: 'manual', account: '' },
     ],
     deductions: [
       F('Wear and tear allowances — Cyprus statutory rates (per FAR)', 33471.82),
@@ -98,12 +126,17 @@ function aus135FY26() {
       // The liability carries BDO's 65,489 unrealised FX loss (AJE 12). FX is
       // exempt (permanent), so it is taken out of the lease difference.
       { id: uid(), label: 'FX on the EUR lease liability — exempt, excluded from the lease difference', openingTD: 0, closingTD: 65489, priorMovement: 65489, source: 'manual' },
-      // Book NBV vs tax WDV — nil at 30 Jun 2025 (FY25 claimed book depreciation, as
-      // filed); statutory W&T from FY26 (FAR: NBV 128,660.91 − TWDV 135,717.19).
-      { id: uid(), label: 'Computer equipment — NBV vs tax WDV (per FAR)', openingTD: 0, closingTD: -7056.28, source: 'far' },
+      // Book NBV vs tax WDV at statutory W&T from FY25 (FAR). 30 Jun 2025:
+      // NBV 82,630.99 − TWDV 79,549.67 = 3,081.32, not booked → prior year.
+      // 30 Jun 2026: NBV 128,660.91 − TWDV 132,635.87 = −3,974.97.
+      { id: uid(), label: 'Computer equipment — NBV vs tax WDV (per FAR)', openingTD: 0, closingTD: -3974.97, priorMovement: 3081.32, source: 'far',
+        openingNote: 'No deferred tax was booked at 30 Jun 2025. At statutory wear and tear the 30 Jun 2025 difference is NBV 82,630.99 − TWDV 79,549.67 = 3,081.32, recognised as a prior-year movement.' },
     ],
-    // FY25 tax (76,152.18) is still unpaid on 260100 at 30 Jun 2026.
-    priorTaxByAccount: { '260100': -76152.18 },
+    // FY25 tax booked 76,152.18 is still unpaid on 260100 at 30 Jun 2026. The
+    // expected FY25 balance is the recomputed tax, so the CT-FY25 journal
+    // releases the over-provision to income tax expense.
+    priorTaxByAccount: { '260100': -aus135FY25Recompute().recomputed },
+    priorYearTrueUp: aus135FY25Recompute(),
     priorYearProvisionCarried: 76152.18,
     priorYearAdjustment: 0,
     // Sage posting pack. Sage FY25 is locked and its 1 Jul 2025 opening is

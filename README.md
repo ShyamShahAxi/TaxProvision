@@ -59,7 +59,13 @@ The tax payable ties to AJE 5. The TB is the Sage FY25 TB plus BDO's 12 adjustin
 - **Rate:** Cyprus taxes calendar years and the corporate rate rose to 15% from tax year 2026. FY26 is apportioned 50/50 (BDO's FY25 method), giving 13.75%.
 - **Deferred tax rate:** 15%, the rate enacted for reversal.
 - **Additional charge:** the 10% charge is kept.
-- **Wear and tear:** comes from the FAR at statutory rates.
+- **Wear and tear:** comes from the FAR at statutory rates, applied from FY25.
+- **Entertainment:** only the excess over the statutory cap is added back (9,120.36).
+- **FY25 recomputed (`aus135FY25Recompute`):** BDO's computation is corrected and the difference is trued up in FY26 through the CT-FY25 journal. Two corrections:
+  - entertainment of 12,106 is deductible because it is within the cap;
+  - wear and tear is 4,230.40 at statutory rates, not book depreciation of 1,148.
+  The corrected tax is 74,063.77 against 76,152.18 booked, a 2,088.41 over-provision. The Tax note shows the reconciliation.
+- **Reseeding:** bump `AUS135_BUNDLE_VERSION` when the bundled data changes. Stored copies are then reseeded once.
 - **FX:** exempt both ways.
 - **Leases:** ROU depreciation is added back and lease principal deducted.
 - **Prior-year true-up:** the deferred tax BDO did not book at 30 Jun 2025 (IFRS 16 lease, net of the exempt FX on the lease liability) comes in as a **prior-year deferred movement**. FY25 itself is unchanged.
