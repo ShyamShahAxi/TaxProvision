@@ -62,7 +62,7 @@ The tax payable ties to AJE 5. The TB is the Sage FY25 TB plus BDO's 12 adjustin
 - **Wear and tear:** comes from the FAR at statutory rates, applied from FY25.
 - **Entertainment:** only the excess over the statutory cap is added back (9,120.36).
 - **FY25 recomputed (`aus135FY25Recompute`):** BDO's computation is corrected and the difference is trued up in FY26 through the CT-FY25 journal. Two corrections:
-  - entertainment of 12,106 is deductible because it is within the cap;
+  - "other non-allowable 12,106" = lease interest 11,310.19 + irrecoverable VAT 796 (matches to the dollar), both deductible;
   - wear and tear is 4,230.40 at statutory rates, not book depreciation of 1,148.
   The corrected tax is 74,063.77 against 76,152.18 booked, a 2,088.41 over-provision. The Tax note shows the reconciliation.
 - **Reseeding:** bump `AUS135_BUNDLE_VERSION` when the bundled data changes. Stored copies are then reseeded once.

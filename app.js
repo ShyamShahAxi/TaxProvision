@@ -1249,20 +1249,24 @@ function closingTaxPayable(P) { return num(provision.priorYearProvisionCarried) 
 function trueUpBlock() {
   const t = provision.priorYearTrueUp;
   if (!t) return '';
-  const r = (label, v, cls) => `<tr class="${cls || ''}"><td class="label">${esc(label)}</td><td class="num">${acc(v)}</td></tr>`;
+  if (!t.lines) return '';
+  const chip = st => st === 'ok' ? '<span class="pill green">Agreed</span>' : st === 'fix' ? '<span class="pill red">Corrected</span>' : '<span class="pill amber">To confirm</span>';
+  const d = (a, b) => { const x = b - a; return Math.abs(x) < 0.005 ? '–' : acc(x); };
+  const row = (label, a, b, st, note, cls) => `<tr class="${cls || ''}"><td class="label">${esc(label)}${note ? `<div class="dim" style="font-weight:400;white-space:normal;max-width:70ch;margin-top:2px">${esc(note)}</div>` : ''}</td><td class="num">${acc(a)}</td><td class="num">${acc(b)}</td><td class="num">${d(a, b)}</td><td>${st ? chip(st) : ''}</td></tr>`;
+  const body = t.lines.map(l => l.sec ? `<tr class="section"><td colspan="5">${esc(l.sec)}</td></tr>` : row(l.label, l.bdo, l.cor, l.st, l.note)).join('');
+  const bdoTotal = t.bdoTax + t.bdoAddl;
   return `<div class="note-block">
     <h3>${esc(fyPrior())} current tax recomputed — true-up in ${esc(fyCur())}</h3>
-    <div class="note-sub">${esc(fyPrior())} is closed as signed. The prior-year computation is corrected here and the difference to the tax booked is recognised in ${esc(fyCur())} as an (over)/under provision (journal CT-${esc(fyPrior())}).</div>
-    <div class="table-wrap"><table class="comp-table"><tbody>
-      ${r('Chargeable income per the filed computation', t.bdoCI, 'subtotal')}
-      ${t.adj.map(a => r(a.label, a.amount)).join('')}
-      ${r('Chargeable income — corrected', t.ci, 'subtotal')}
-      ${r('Tax at ' + t.rate + '%', t.tax)}
-      ${r(t.addlPct + '% additional charge', t.addl)}
-      ${r('Tax payable — corrected', t.recomputed, 'subtotal')}
-      ${r('Tax booked in ' + fyPrior(), t.filed)}
-      ${r(t.diff < 0 ? 'Over-provision released in ' + fyCur() : 'Under-provision charged in ' + fyCur(), t.diff, 'grand')}
+    <div class="note-sub">${esc(fyPrior())} is closed as signed. BDO's computation of corporation tax (FS p.26) is checked line by line against the audited trial balance; the corrected tax less the tax booked is recognised in ${esc(fyCur())} as an (over)/under provision (journal CT-${esc(fyPrior())}).</div>
+    <div class="table-wrap"><table class="comp-table">
+      <thead><tr><th></th><th class="num">Per BDO</th><th class="num">Corrected</th><th class="num">Change</th><th>Status</th></tr></thead>
+      <tbody>${body}
+      ${row('Chargeable income', t.bdoCI, t.ci, '', '', 'subtotal')}
+      ${row('Tax at ' + t.rate + '%', t.bdoTax, t.tax, '', '')}
+      ${row(t.addlPct + '% additional charge', t.bdoAddl, t.addl, 'check', t.addlNote)}
+      ${row('Tax payable', bdoTotal, t.recomputed, '', '', 'grand')}
     </tbody></table></div>
+    <p class="legend">Tax booked in ${esc(fyPrior())} (AJE 5) ${fmt(t.filed)} − corrected ${fmt(t.recomputed)} = <strong>${acc(t.diff)}</strong> ${t.diff < 0 ? 'over-provision released' : 'under-provision charged'} in ${esc(fyCur())}. BDO's figures are whole dollars, labelled € on its schedule but taken from the US$ accounts.</p>
   </div>`;
 }
 

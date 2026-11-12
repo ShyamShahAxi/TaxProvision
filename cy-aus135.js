@@ -33,7 +33,7 @@
 'use strict';
 
 /* Bump when the bundled data changes: viewers' stored AUS135 is reseeded once. */
-const AUS135_BUNDLE_VERSION = '2026-11-12.2';
+const AUS135_BUNDLE_VERSION = '2026-11-12.3';
 
 function aus135Settings(fy) {
   const base = Object.assign({}, defaultSettings, {
@@ -88,14 +88,28 @@ const AUS135_ENT_EXCESS = Math.round((29616.26 + 3047.10 - (17086 + 30000) / 2) 
    to the 76,152.18 booked is the FY26 prior-year (over)/under provision. */
 function aus135FY25Recompute() {
   const r2 = v => Math.round(v * 100) / 100;
-  const bdoCI = 553834, filed = 76152.18;
-  const adj = [
-    { label: 'Entertainment disallowed by BDO ("other non-allowable expenses") — within the cap (lower of 1% of gross income or €17,086), so deductible', amount: -12106 },
-    { label: 'Wear and tear at statutory rates (computer hardware 20%, CCTV/TV 10%, full annual allowance) 4,230.40 less BDO book depreciation 1,148', amount: -(4230.40 - 1148) },
+  const filed = 76152.18;
+  // Line by line: BDO's figure (FS p.26), the corrected figure, status
+  // (ok / fix / check) and the evidence from the audited TB.
+  const lines = [
+    { sec: 'Net profit per income statement' },
+    { label: 'Profit before tax', bdo: 233711, cor: 233711, st: 'ok', note: 'Signed FS p.4.' },
+    { sec: 'Add' },
+    { label: 'Depreciation', bdo: 61081, cor: 61081, st: 'ok', note: 'ROU asset 59,932 (670150) + computer equipment 1,149 (670120, AJE 9). Book depreciation is never deductible; wear and tear replaces it.' },
+    { label: 'Unrealised foreign exchange loss', bdo: 320297, cor: 320297, st: 'ok', note: 'Revaluation 400300 (incl. AJE 12, 65,489 on the EUR lease liability). FX differences are outside Cyprus tax (exempt / not deductible), so the loss in PBT is added back.' },
+    { label: 'Non-charitable donations', bdo: 70, cor: 70, st: 'ok', note: '620520 — not wholly and exclusively for the business.' },
+    { label: 'Other non-allowable expenses', bdo: 12106, cor: 0, st: 'fix', note: 'Not itemised by BDO. It matches lease interest 11,310.19 (680100) + irrecoverable VAT 796.00 (660120) = 12,106.19 to the dollar; entertainment (12,421.59) does not match. Lease interest is a cost of the office lease and is deductible — BDO\'s "rent payments" below is only the principal, so without it the lease is relieved on 54,795 of the 66,105 paid. Irrecoverable VAT follows the deductible expense it sits on. Confirm the breakdown with BDO.' },
+    { sec: 'Less' },
+    { label: 'Annual wear and tear allowances', bdo: 1148, cor: 4230.40, st: 'fix', note: 'BDO claimed the book depreciation (no % on its schedule). Statutory: computer hardware 20% × 18,173 = 3,634.60; CCTV and TV 10% × 5,958 = 595.80; full annual allowance. The Lenovo Thinkpad 59,649 (bought 30 Jun 2025, in use from 1 Jul 2025) starts in FY26. Per FAR.' },
+    { label: 'Realised foreign exchange profit', bdo: 17488, cor: 17488, st: 'ok', note: 'Currency conversion 410300 — a gain of 17,487.50 that is inside PBT. FX is exempt, so the gain is taken out (deducted) just as the loss is added back; it is a removal of exempt income, not a second deduction.' },
+    { label: 'Rent payments (IFRS 16 lease)', bdo: 54795, cor: 54795, st: 'ok', note: 'Lease liability 450,832.93 → 396,038.13 before FX = principal repaid 54,794.80. With the interest now allowed, total relief = 66,104.99 = the rent actually paid. ROU depreciation is added back above.' },
   ];
-  const ci = r2(bdoCI + adj.reduce((s, a) => s + a.amount, 0));
+  const sum = k => lines.filter(l => !l.sec).reduce((s, l) => s + (/^(Annual|Realised|Rent)/.test(l.label) ? -l[k] : l[k]), 0);
+  const bdoCI = r2(sum('bdo')), ci = r2(sum('cor'));
   const tax = r2(ci * 0.125), addl = r2(tax * 0.10), recomputed = r2(tax + addl);
-  return { bdoCI, adj, ci, rate: 12.5, tax, addlPct: 10, addl, recomputed, filed, diff: r2(recomputed - filed) };
+  const bdoTax = 69229.25, bdoAddl = 6922.93;
+  return { lines, bdoCI, ci, rate: 12.5, bdoTax, tax, addlPct: 10, bdoAddl, addl, recomputed, filed, diff: r2(recomputed - filed),
+    addlNote: 'Kept at 10% of the tax, as BDO. Most sources read the charge as 10% of (75% of the final tax − provisional tax paid), i.e. 7.5% of the tax when nothing was paid — to confirm.' };
 }
 
 /* FY26 — TB-linked computation with the true-ups. */
