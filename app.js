@@ -584,10 +584,15 @@ function renderDashboard(P) {
     { label: 'Total tax expense', value: acc(P.totalTaxExpense), accent: true },
     { label: 'Effective tax rate', value: pct(P.etr * 100), hint: 'statutory ' + pct(P.r * 100) },
   ];
-  $('#kpi-row').innerHTML = kpis.map(k =>
-    `<div class="kpi${k.accent ? ' accent' : ''}"><div class="label">${esc(k.label)}</div>` +
-    `<div class="value${k.value.length > 12 ? ' sm' : ''}">${k.value}</div>` +
-    (k.hint ? `<div class="hint">${esc(k.hint)}</div>` : '') + `</div>`).join('');
+  // Axi pattern: the headline figure in the hero, the rest in a summary strip.
+  const hero = kpis.find(k => k.accent), rest = kpis.filter(k => !k.accent);
+  $('#kpi-row').innerHTML =
+    `<div class="hero"><div class="figure"><div class="eyebrow">${esc(hero.label)} · ${esc(yearTag())}</div><div class="big">${hero.value}</div>` +
+    `<div class="dim">Current ${fmt(P.currentTax)} · deferred ${acc(P.deferredCharge)} · prior years ${acc(P.priorYearProvision)}</div></div>` +
+    `<div class="end"><div class="eyebrow">Effective tax rate</div><div class="val">${pct(P.etr * 100)}</div><div class="dim">statutory ${esc(rateLabel())}</div></div></div>` +
+    `<div class="card figures">` + rest.filter(k => k.label !== 'Effective tax rate').map(k =>
+      `<div class="figure"><div class="eyebrow">${esc(k.label)}</div><div class="val">${k.value}</div>` +
+      (k.hint ? `<div class="dim">${esc(k.hint)}</div>` : '') + `</div>`).join('') + `</div>`;
 
   $('#dash-charge').innerHTML = `<table class="comp-table"><tbody>
     <tr><td class="label">Current tax — current year</td><td class="num">${acc(P.currentTax)}</td></tr>
@@ -1184,10 +1189,22 @@ function currentTaxRollupHtml(P) {
     </div>`;
 }
 
+/* Ledger postings that precede the tax journals (e.g. prior-year audit
+   adjustments not yet in the ledger, post-TB journals) — stored per year. */
+function postingJournals() { return Array.isArray(provision.postingJournals) ? provision.postingJournals : []; }
+function allJournals(P) { return postingJournals().concat(buildJournals(P)); }
+
 function renderJournals(P) {
-  const js = buildJournals(P);
-  if (!js.length) { $('#journals-wrap').innerHTML = `<div class="card"><p class="legend" style="margin:0">Nothing to post yet — enter the computation figures first.</p></div>`; return; }
-  $('#journals-wrap').innerHTML = js.map(j => {
+  const pre = postingJournals(), js = buildJournals(P);
+  if (!js.length && !pre.length) { $('#journals-wrap').innerHTML = `<div class="card"><p class="legend" style="margin:0">Nothing to post yet — enter the computation figures first.</p></div>`; return; }
+  const section = (title, sub) => `<div style="margin:6px 0 12px"><div class="eyebrow">${esc(title)}</div>${sub ? `<div class="hint-text" style="margin-top:2px">${esc(sub)}</div>` : ''}</div>`;
+  $('#journals-wrap').innerHTML =
+    (pre.length ? section('1 · Ledger postings before the provision', 'Prior-year audit adjustments not yet in the ledger and the post-TB journals — post these first, in order.') + cards(pre) : '') +
+    (js.length ? section((pre.length ? '2 · ' : '') + 'Tax provision journals', 'Computed from the provision — they update as the computation changes.') + cards(js) : '');
+}
+function cards(js) {
+  const m = v => num(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return js.map(j => {
     const totDr = j.lines.reduce((t, l) => t + l.dr, 0);
     const totCr = j.lines.reduce((t, l) => t + l.cr, 0);
     return `<div class="card">
@@ -1196,8 +1213,8 @@ function renderJournals(P) {
       <div class="table-wrap"><table>
         <thead><tr><th>Account</th><th>Description</th><th class="num">Debit</th><th class="num">Credit</th></tr></thead>
         <tbody>${j.lines.map(l => `<tr><td class="note-num">${esc(l.account)}</td><td>${esc(l.name)}</td>` +
-          `<td class="num">${l.dr ? fmt(l.dr) : ''}</td><td class="num">${l.cr ? fmt(l.cr) : ''}</td></tr>`).join('')}</tbody>
-        <tfoot><tr><td colspan="2">Total</td><td class="num">${fmt(totDr)}</td><td class="num">${fmt(totCr)}</td></tr></tfoot>
+          `<td class="num">${l.dr ? m(l.dr) : ''}</td><td class="num">${l.cr ? m(l.cr) : ''}</td></tr>`).join('')}</tbody>
+        <tfoot><tr><td colspan="2">Total</td><td class="num">${m(totDr)}</td><td class="num">${m(totCr)}</td></tr></tfoot>
       </table></div>
     </div>`;
   }).join('');
@@ -1206,58 +1223,99 @@ function renderJournals(P) {
 function exportJournalsCsv(P) {
   P = P || recompute();
   const rows = [['Provision journals', yearTag()], ['Journal', 'Narrative', 'Account', 'Description', 'Debit', 'Credit']];
-  buildJournals(P).forEach(j => j.lines.forEach(l =>
+  allJournals(P).forEach(j => j.lines.forEach(l =>
     rows.push([j.ref, j.narrative, l.account, l.name, l.dr ? round2(l.dr) : '', l.cr ? round2(l.cr) : ''])));
   download(`tax-journals-ya${settings.ya}.csv`, toCsv(rows), 'text/csv');
 }
 
 /* ----- Notes ----- */
+/* Run fn against another archived year's settings/provision (e.g. the prior
+   year for comparatives), restoring the active year afterwards. */
+function withYear(ya, fn) {
+  const saved = loadYears()[String(ya)];
+  if (!saved) return null;
+  const s0 = settings, p0 = provision;
+  try {
+    settings = Object.assign({}, defaultSettings, saved.settings);
+    provision = Object.assign(emptyProvision(), saved.provision);
+    return fn();
+  } catch (e) { return null; } finally { settings = s0; provision = p0; }
+}
+/* Closing current tax payable (liability +) after the provision journals. */
+function closingTaxPayable(P) { return num(provision.priorYearProvisionCarried) + P.currentTax + P.priorAdj - num(provision.taxPaid); }
+
+/* Tax note in financial-statement form, with prior-year comparatives taken
+   from the archived prior year (when one exists). */
 function renderNotes(P) {
   const cur = settings.currency;
-  const recon = reconLines(P);
-  // Per-component balances use the same computed temporary differences as the
-  // totals (defTD resolves TB-linked accounts and any opening override), so the
-  // rows add up to the opening / movement / closing totals below.
-  const dtRows = provision.deferredItems.map(x => {
-    const op = defTD(x, 'opening') * P.rDT, cl = defTD(x, 'closing') * P.rDT;
-    return `<tr><td>${esc(x.label || '—')}</td><td class="num note-num">${acc(op)}</td>` +
-      `<td class="num note-num">${acc(cl - op)}</td>` +
-      `<td class="num note-num">${acc(cl)}</td></tr>`;
-  }).join('');
+  const priorYa = String(Number(settings.ya) - 1);
+  const base = l => l.replace(/ of [\d.]+%.*$/, '').replace(/ at [\d.]+%$/, '');
+  const snap = () => {
+    const Q = recompute();
+    return { Q, tag: fyCur(), recon: reconLines(Q), payable: closingTaxPayable(Q),
+      dt: provision.deferredItems.map(x => ({ label: x.label, op: defTD(x, 'opening') * Q.rDT, cl: defTD(x, 'closing') * Q.rDT })) };
+  };
+  const C = snap();
+  const R = withYear(priorYa, snap);   // comparatives (null when no prior year is archived)
+  const has = !!R;
+  const Q = C.Q, Rq = has ? R.Q : null;
+  const m = v => (v == null ? '–' : acc(v));
+  const head = `<thead><tr><th></th><th class="num">${esc(C.tag)}</th>${has ? `<th class="num">${esc(R.tag)}</th>` : ''}</tr></thead>`;
+  const row = (label, a, b, cls, fa) => `<tr class="${cls || ''}"><td class="label">${esc(label)}</td><td class="num">${fa ? fa(a) : m(a)}</td>${has ? `<td class="num cmp">${fa ? fa(b) : m(b)}</td>` : ''}</tr>`;
+  const sec = t => `<tr class="section"><td colspan="${has ? 3 : 2}">${esc(t)}</td></tr>`;
+  const pc = v => (v == null ? '–' : pct(v * 100));
+
+  const expense = [
+    sec('Current tax'),
+    row('Current year', Q.currentTax, Rq && Rq.currentTax),
+    row('(Over)/under provision — prior years', Q.priorAdj, Rq && Rq.priorAdj),
+    sec('Deferred tax'),
+    row('Origination and reversal of temporary differences', Q.deferredCY, Rq && Rq.deferredCY),
+    row('Prior-year deferred tax not previously recognised', Q.deferredPriorYr, Rq && Rq.deferredPriorYr),
+    row('Income tax expense', Q.totalTaxExpense, Rq && Rq.totalTaxExpense, 'grand'),
+  ].join('');
+
+  // ETR reconciliation — comparative lines aligned by label.
+  const labels = [];
+  C.recon.concat(has ? R.recon : []).forEach(x => { if (!x.grand && !labels.includes(base(x.label))) labels.push(base(x.label)); });
+  const find = (list, l) => { const x = list.find(y => !y.grand && base(y.label) === l); return x ? x.amt : 0; };
+  const reconRows = row('Profit before tax', Q.pbt, Rq && Rq.pbt, 'subtotal') +
+    labels.map(l => row(l === 'Tax at statutory rate' ? 'Tax at the applicable rate' + (has ? '' : ' — ' + rateLabel()) : l, find(C.recon, l), has ? find(R.recon, l) : null)).join('') +
+    row('Income tax expense', Q.totalTaxExpense, Rq && Rq.totalTaxExpense, 'grand') +
+    row('Effective tax rate', Q.etr, Rq && Rq.etr, '', pc);
+
+  const dtRows = C.dt.map(d => `<tr><td>${esc(d.label)}</td><td class="num">${acc(d.op)}</td><td class="num">${acc(d.cl - d.op)}</td><td class="num">${acc(d.cl)}</td></tr>`).join('');
 
   $('#notes-wrap').innerHTML = `
   <div class="note-block">
-    <h3>Income tax expense</h3>
-    <div class="note-sub">For ${esc(yearTag())} — amounts in ${esc(cur)}. Ties to the final trial balance (accounts ${esc(settings.glTaxExpense)} + ${esc(settings.glDeferredExpense)} after the tax provision journals).</div>
-    <div class="table-wrap"><table class="comp-table"><tbody>
-      <tr class="section"><td colspan="2">Current tax</td></tr>
-      <tr><td class="label">Current year</td><td class="num">${acc(P.currentTax)}</td></tr>
-      <tr class="section"><td colspan="2">Deferred tax</td></tr>
-      <tr><td class="label">Origination and reversal of temporary differences — current year</td><td class="num">${acc(P.deferredCY)}</td></tr>
-      <tr class="section"><td colspan="2">Prior years</td></tr>
-      <tr><td class="label">(Over)/under provision — current tax</td><td class="num">${acc(P.priorAdj)}</td></tr>
-      <tr><td class="label">(Over)/under provision — deferred tax</td><td class="num">${acc(P.deferredPriorYr)}</td></tr>
-      <tr class="subtotal"><td class="label">Total (over)/under provision — prior years</td><td class="num">${acc(P.priorYearProvision)}</td></tr>
-      <tr class="grand"><td class="label">Income tax expense</td><td class="num">${acc(P.totalTaxExpense)}</td></tr>
-    </tbody></table></div>
+    <h3>Tax</h3>
+    <div class="note-sub">${esc(settings.companyName)} — ${esc(yearTag())}, amounts in ${esc(cur)}. Ties to the final trial balance (accounts ${esc(settings.glTaxExpense)} + ${esc(settings.glDeferredExpense)} after the provision journals).${has ? '' : ' No prior year archived, so comparatives are omitted.'}</div>
+    <div class="table-wrap"><table class="comp-table">${head}<tbody>${expense}</tbody></table></div>
   </div>
 
   <div class="note-block">
-    <h3>Reconciliation of effective tax rate</h3>
-    <div class="note-sub">Profit before tax ${acc(P.pbt)}; effective rate ${pct(P.etr * 100)}</div>
-    <div class="table-wrap"><table class="comp-table"><tbody>
-      ${recon.map(x => `<tr class="${x.grand ? 'grand' : ''}"><td class="label">${esc(x.label)}</td><td class="num">${acc(x.amt)}</td></tr>`).join('')}
+    <h3>Reconciliation of tax based on taxable income and tax based on accounting profits</h3>
+    <div class="note-sub">Applicable rate ${esc(rateLabel())}${has ? ' (' + esc(R.tag) + ': ' + esc(withYear(priorYa, rateLabel) || '') + ')' : ''}. Deferred tax is measured at ${dtRateLabel()}, the rate enacted for the periods in which the differences reverse.</div>
+    <div class="table-wrap"><table class="comp-table">${head}<tbody>${reconRows}</tbody></table></div>
+  </div>
+
+  <div class="note-block">
+    <h3>Current tax liabilities</h3>
+    <div class="table-wrap"><table class="comp-table">${head}<tbody>
+      ${row('Corporation tax', C.payable, has ? R.payable : null, 'grand')}
     </tbody></table></div>
+    ${num(provision.priorYearProvisionCarried) ? `<p class="legend">Includes ${fmt(provision.priorYearProvisionCarried)} for ${esc(fyPrior())} still outstanding at the period end.</p>` : ''}
   </div>
 
   <div class="note-block">
     <h3>Deferred tax</h3>
-    <div class="note-sub">Movement in deferred tax ${P.closingDT >= 0 ? 'liabilities' : 'assets'} by component</div>
+    <div class="note-sub">Movement in deferred tax ${Q.closingDT >= 0 ? 'liabilities' : 'assets'} by component, at ${dtRateLabel()}. Negative amounts are assets.</div>
     <div class="table-wrap"><table>
       <thead><tr><th>Component</th><th class="num">Opening</th><th class="num">Recognised in P&amp;L</th><th class="num">Closing</th></tr></thead>
       <tbody>${dtRows || '<tr class="empty-row"><td colspan="4">No temporary differences.</td></tr>'}</tbody>
-      <tfoot><tr><td>Total</td><td class="num">${acc(P.openingDT)}</td><td class="num">${acc(P.deferredCharge)}</td><td class="num">${acc(P.closingDT)}</td></tr></tfoot>
+      <tfoot><tr><td>Total — deferred tax ${Q.closingDT >= 0 ? 'liability' : 'asset'}</td><td class="num">${acc(Q.openingDT)}</td><td class="num">${acc(Q.deferredCharge)}</td><td class="num">${acc(Q.closingDT)}</td></tr></tfoot>
     </table></div>
+    ${has && Math.abs(Rq.closingDT) < 0.005 && Math.abs(Q.deferredPriorYr) > 0.005 ? `<p class="legend">No deferred tax was recognised at the end of ${esc(R.tag)}. The ${acc(Q.deferredPriorYr)} on the differences that existed then is recognised in ${esc(C.tag)} as a prior-year item.</p>` : ''}
   </div>`;
 }
 
@@ -1806,6 +1864,7 @@ function rollForwardYear() {
 
   // Clear the closed year's inputs; keep the structure (linked lines, GL codes).
   provision.auditAdjustments = [];
+  provision.postingJournals = [];
   provision.insurancePremiums = provision.insurancePremiums.map(p => Object.assign({}, p, { amount: 0 }));
   provision.deferredItems = provision.deferredItems.map(d =>
     d.source === 'tb' ? Object.assign({}, d, { openingTD: '' })
@@ -1885,3 +1944,14 @@ localStorage.setItem(HEAL_KEY, '1');
 
 wire();
 renderAll();
+
+/* Optional start entity (window.TP_DEFAULT_ENTITY or ?entity=CODE): switch to
+   it once on first visit; afterwards the viewer's own choice is kept. */
+try {
+  const want = String(window.TP_DEFAULT_ENTITY || new URLSearchParams(location.search).get('entity') || '').trim();
+  const k = 'taxprov.defaultEntity.v1';
+  if (want && localStorage.getItem(k) !== want) {
+    localStorage.setItem(k, want);
+    if (String(settings.entity) !== want) switchEntity(want);
+  }
+} catch (e) { /* storage blocked — stay on the current entity */ }

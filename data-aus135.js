@@ -217,6 +217,23 @@ const AUS135_FY26_TB = [
   { "code": "700100", "name": "Income Tax Expense", "opening": 0, "debit": 0, "credit": 0, "closing": 0 },
   { "code": "999999", "name": "GL Suspense Account", "opening": -0.04, "debit": 0.04, "credit": 0, "closing": 0 }
 ];
+const AUS135_FY26_OB = [
+  { "account": "110300-155", "name": "IC-R AXICORP PTE. LTD (USD)", "sage": 3647938, "adj": -3387.79, "audited": 3644550.21 },
+  { "account": "120100", "name": "Prepayments", "sage": 37136.75, "adj": -37136.75, "audited": 0 },
+  { "account": "120600", "name": "GST / VAT", "sage": 27461.65, "adj": 9121, "audited": 36582.65 },
+  { "account": "140100", "name": "Computer Equipment - Cost", "sage": 0, "adj": 83780.07, "audited": 83780.07 },
+  { "account": "140110", "name": "Computer Equipment - Acc Depreciation", "sage": 0, "adj": -1149.08, "audited": -1149.08 },
+  { "account": "140340", "name": "Lease Liability", "sage": -396038.13, "adj": -65489, "audited": -461527.13 },
+  { "account": "240100-005", "name": "IC-P AxiCorp Financial Services Pty Ltd USD", "sage": -240477.24, "adj": 1000, "audited": -239477.24 },
+  { "account": "240100-175", "name": "IC-P Solaris EMEA Limited USD", "sage": -728748.92, "adj": 312629, "audited": -416119.92 },
+  { "account": "240100-501", "name": "IC-P Axi Financial Services (UK) Ltd", "sage": -2794095.06, "adj": -377184, "audited": -3171279.06 },
+  { "account": "260100", "name": "Provision for income tax", "sage": 0, "adj": -76152.18, "audited": -76152.18 },
+  { "account": "270100", "name": "Provision for Bonus", "sage": -272743.86, "adj": 65801.83, "audited": -206942.03 },
+  { "account": "270600", "name": "Provisions - Specific", "sage": -32906.5, "adj": 9568.26, "audited": -23338.24 },
+  { "account": "300100", "name": "Equity Shares", "sage": 0, "adj": -1000, "audited": -1000 },
+  { "account": "310600", "name": "Retained Earnings", "sage": -237160.53, "adj": 79598.64, "audited": -157561.89 }
+];
+// Sage opening at 1 Jul 2025 is pre-audit; 'adj' = BDO FY25 adjustments to post in FY26.
 const AUS135_FY26_JNL = [
   { "jnl": 7, "account": "110300-155", "description": "FY26 post-TB journal 7 — Transfer pricing — revenue increase per final TP (23,270)", "debit": 23270, "credit": 0 },
   { "jnl": 1, "account": "110300-175", "description": "FY26 post-TB journal 1 — Correct depreciation calculation; accumulated depreciation on assets transferred from Solaris EMEA", "debit": 28141.99, "credit": 0 },

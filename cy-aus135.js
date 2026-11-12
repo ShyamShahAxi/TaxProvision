@@ -106,8 +106,27 @@ function aus135FY26() {
     priorTaxByAccount: { '260100': -76152.18 },
     priorYearProvisionCarried: 76152.18,
     priorYearAdjustment: 0,
+    // Sage posting pack. Sage FY25 is locked and its 1 Jul 2025 opening is
+    // pre-audit, so BDO's FY25 adjustments (incl. the FY25 tax) are posted in
+    // FY26 against retained earnings, then the 7 post-TB journals; the tax
+    // provision journals follow automatically on the Journals tab.
+    postingJournals: aus135PostingJournals(),
     locked: false,
   });
+}
+
+function aus135PostingJournals() {
+  const line = (account, name, amt) => ({ account, name, dr: amt > 0 ? amt : 0, cr: amt < 0 ? -amt : 0 });
+  const js = [{
+    ref: 'OB-FY25',
+    narrative: 'Opening balances 1 Jul 2025 — BDO FY25 audit adjustments (AJE 1–12, incl. FY25 corporation tax 76,152.18) posted in FY26; P&L effect to retained earnings (Sage FY25 locked)',
+    lines: AUS135_FY26_OB.map(o => line(o.account, o.name, o.adj)),
+  }];
+  const names = {}; AUS135_FY26_TB.forEach(a => { names[a.code] = a.name; });
+  const by = {};
+  AUS135_FY26_JNL.forEach(e => { (by[e.jnl] = by[e.jnl] || { desc: e.description.replace(/^FY26 post-TB journal \d+ — /, ''), lines: [] }).lines.push(line(e.account, names[e.account] || '', e.debit - e.credit)); });
+  Object.keys(by).sort((a, b) => a - b).forEach(n => js.push({ ref: 'ADJ-' + n, narrative: 'FY26 post-TB journal ' + n + ' — ' + by[n].desc, lines: by[n].lines }));
+  return js;
 }
 
 /* Entity bundle for the header switcher: FY26 active, FY25 archived. */

@@ -5,13 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Tax Provision</title>
   <meta name="description" content="Corporate tax provision — current tax computation, deferred tax, effective-rate reconciliation and disclosure notes. Runs entirely in your browser." />
-  <link rel="stylesheet" href="styles.css?v=5" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Instrument+Sans:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="styles.css?v=6" />
 </head>
 <body>
   <header class="app-header">
-    <div>
-      <h1>Tax Provision</h1>
-      <div class="sub">Current &amp; deferred tax &middot; Singapore &middot; runs entirely in your browser</div>
+    <div class="brand">
+      <div class="mark">TP</div>
+      <div>
+        <h1>Tax Provision</h1>
+        <div class="sub">Current &amp; deferred tax &middot; Singapore &middot; UK &middot; Cyprus</div>
+      </div>
     </div>
     <div class="company">
       <div id="company-name">Company</div>
@@ -46,7 +52,7 @@
       <div class="view-head">
         <div><h2>Provision summary</h2><div class="desc" id="dash-sub">Position for the current Year of Assessment.</div></div>
       </div>
-      <div class="kpi-grid" id="kpi-row"></div>
+      <div id="kpi-row"></div>
       <div class="two-col">
         <div class="card">
           <h3>Tax charge to profit or loss</h3>
